@@ -383,8 +383,16 @@ textarea::placeholder {
 }
 
 .button-mint {
-  border-color: var(--ink);
+  border: 2px solid var(--ink);
   background: var(--mint);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.button-mint:hover:not(:disabled) {
+  background: var(--paper-strong);
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: translate(2px, 2px);
 }
 
 .button-danger {
