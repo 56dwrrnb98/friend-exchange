@@ -901,7 +901,7 @@
             <span class="form-number">02</span>
             <div>
               <h2>Add the possible outcomes</h2>
-              <p>Yes/No works. So do Tim/Dave/Sarah/An unexplained disappearance.</p>
+              <p>Yes/No works. So do Joe/Susan/Beth/An unexplained disappearance.</p>
             </div>
           </div>
           <div id="choice-builder" class="choice-builder"></div>
@@ -1430,7 +1430,7 @@
         <p style="margin-top:0">
           Every committed point will be returned to its owner, and this market will be permanently marked as void.
         </p>
-        <p class="trade-warning">Appropriate for cancellations, ambiguous outcomes, acts of weather, or Tim insisting the rules were never clear.</p>
+        <p class="trade-warning">Appropriate for cancellations, ambiguous outcomes, acts of weather, or someone insisting the rules were never clear.</p>
       </div>
       <div class="modal-footer">
         <button class="button button-secondary" data-modal-close type="button">Keep market</button>
