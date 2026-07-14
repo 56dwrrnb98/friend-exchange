@@ -35,8 +35,8 @@
       </section>
     </div>
 
-    <div id="join-screen" class="join-screen hidden">
-      <section class="join-card">
+    <div id="auth-screen" class="join-screen hidden">
+      <section class="join-card auth-card">
         <div class="brand-mark" aria-hidden="true">FX</div>
         <p class="eyebrow">Welcome to</p>
         <h1 id="join-app-name">The Friend Exchange</h1>
@@ -44,27 +44,173 @@
           Markets of consequence. Sort of.
         </p>
 
-        <form id="join-form" class="join-form">
-          <label for="display-name">What should the exchange call you?</label>
-          <input
-            id="display-name"
-            name="displayName"
-            type="text"
-            minlength="2"
-            maxlength="32"
-            autocomplete="nickname"
-            placeholder="Mike"
-            required
-          />
+        <div class="auth-tabs" role="tablist" aria-label="Account options">
+          <button class="auth-tab is-active" data-auth-mode="login" type="button" role="tab" aria-selected="true">
+            Log in
+          </button>
+          <button class="auth-tab" data-auth-mode="signup" type="button" role="tab" aria-selected="false">
+            Create account
+          </button>
+        </div>
+
+        <form id="login-form" class="join-form auth-form">
+          <div>
+            <label for="login-email">Email</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="email"
+              placeholder="mike@example.com"
+              required
+            />
+          </div>
+          <div>
+            <div class="label-row">
+              <label for="login-password">Password</label>
+              <button id="forgot-password-button" class="text-button" type="button">Forgot password?</button>
+            </div>
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              minlength="8"
+              autocomplete="current-password"
+              placeholder="Your extremely secure password"
+              required
+            />
+          </div>
           <button class="button button-primary button-large" type="submit">
-            Enter with 1,000 points
+            Enter the exchange
+          </button>
+        </form>
+
+        <form id="signup-form" class="join-form auth-form hidden">
+          <div>
+            <label for="signup-display-name">Display name</label>
+            <input
+              id="signup-display-name"
+              name="displayName"
+              type="text"
+              minlength="2"
+              maxlength="32"
+              autocomplete="nickname"
+              placeholder="Mike"
+              required
+            />
+          </div>
+          <div>
+            <label for="signup-email">Email</label>
+            <input
+              id="signup-email"
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="email"
+              placeholder="mike@example.com"
+              required
+            />
+          </div>
+          <div>
+            <label for="signup-password">Password</label>
+            <input
+              id="signup-password"
+              name="password"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              placeholder="At least 8 characters"
+              required
+            />
+          </div>
+          <div>
+            <label for="signup-password-confirm">Confirm password</label>
+            <input
+              id="signup-password-confirm"
+              name="passwordConfirm"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              placeholder="One more time, for regulation"
+              required
+            />
+          </div>
+          <button class="button button-primary button-large" type="submit">
+            Create account with 1,000 points
+          </button>
+        </form>
+
+        <form id="reset-request-form" class="join-form auth-form hidden">
+          <div class="auth-message">
+            <p class="eyebrow">Account recovery</p>
+            <h2>Reset your password.</h2>
+            <p>We will email you a secure link. Your imaginary fortune will remain untouched.</p>
+          </div>
+          <div>
+            <label for="reset-email">Email</label>
+            <input
+              id="reset-email"
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="email"
+              placeholder="mike@example.com"
+              required
+            />
+          </div>
+          <button class="button button-primary button-large" type="submit">
+            Send reset link
+          </button>
+          <button id="back-to-login-button" class="button button-secondary" type="button">
+            Back to log in
           </button>
         </form>
 
         <p class="fine-print">
-          No money. No prizes. No economic value. An alarming amount of
-          confidence.
+          No money. No prizes. No economic value. An alarming amount of confidence.
         </p>
+      </section>
+    </div>
+
+    <div id="password-reset-screen" class="join-screen hidden">
+      <section class="join-card auth-card">
+        <div class="brand-mark" aria-hidden="true">FX</div>
+        <p class="eyebrow">Account recovery</p>
+        <h1>Choose a new password.</h1>
+        <p class="join-tagline">
+          A routine restructuring of your personal security portfolio.
+        </p>
+
+        <form id="password-reset-form" class="join-form auth-form">
+          <div>
+            <label for="new-password">New password</label>
+            <input
+              id="new-password"
+              name="password"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              placeholder="At least 8 characters"
+              required
+            />
+          </div>
+          <div>
+            <label for="new-password-confirm">Confirm new password</label>
+            <input
+              id="new-password-confirm"
+              name="passwordConfirm"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              placeholder="Confirm the restructuring"
+              required
+            />
+          </div>
+          <button class="button button-primary button-large" type="submit">
+            Update password
+          </button>
+        </form>
       </section>
     </div>
 

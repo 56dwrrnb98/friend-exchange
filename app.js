@@ -8,8 +8,16 @@
     app: document.querySelector("#app"),
     main: document.querySelector("#main-content"),
     setup: document.querySelector("#setup-screen"),
-    join: document.querySelector("#join-screen"),
-    joinForm: document.querySelector("#join-form"),
+    auth: document.querySelector("#auth-screen"),
+    authTabs: document.querySelector(".auth-tabs"),
+    authModeButtons: document.querySelectorAll("[data-auth-mode]"),
+    loginForm: document.querySelector("#login-form"),
+    signupForm: document.querySelector("#signup-form"),
+    resetRequestForm: document.querySelector("#reset-request-form"),
+    passwordReset: document.querySelector("#password-reset-screen"),
+    passwordResetForm: document.querySelector("#password-reset-form"),
+    forgotPasswordButton: document.querySelector("#forgot-password-button"),
+    backToLoginButton: document.querySelector("#back-to-login-button"),
     modalRoot: document.querySelector("#modal-root"),
     toastRoot: document.querySelector("#toast-root"),
     headerBalance: document.querySelector("#header-balance"),
@@ -29,6 +37,8 @@
     loading: false,
     realtimeChannel: null,
     realtimeTimer: null,
+    authSubscription: null,
+    passwordRecovery: false,
   };
 
   document.querySelector("#join-app-name").textContent = config.appName || "The Friend Exchange";
@@ -66,16 +76,43 @@
 
     bindGlobalEvents();
 
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const queryParams = new URLSearchParams(window.location.search);
+    state.passwordRecovery =
+      hashParams.get("type") === "recovery" || queryParams.get("type") === "recovery";
+
+    const { data: authListener } = state.client.auth.onAuthStateChange((event, session) => {
+      state.user = session?.user || null;
+
+      if (event === "PASSWORD_RECOVERY") {
+        state.passwordRecovery = true;
+        window.setTimeout(showPasswordReset, 0);
+      }
+
+      if (event === "SIGNED_OUT") {
+        window.setTimeout(() => {
+          resetAppState();
+          showAuth("login");
+        }, 0);
+      }
+    });
+    state.authSubscription = authListener.subscription;
+
     const { data, error } = await state.client.auth.getSession();
     if (error) {
       showToast(error.message, "error");
-      showJoin();
+      showAuth("login");
       return;
     }
 
     state.user = data.session?.user || null;
     if (!state.user) {
-      showJoin();
+      showAuth("login");
+      return;
+    }
+
+    if (state.passwordRecovery) {
+      showPasswordReset();
       return;
     }
 
@@ -83,7 +120,26 @@
   }
 
   function bindGlobalEvents() {
-    dom.joinForm.addEventListener("submit", handleJoin);
+    dom.loginForm.addEventListener("submit", handleLogin);
+    dom.signupForm.addEventListener("submit", handleSignup);
+    dom.resetRequestForm.addEventListener("submit", handleResetRequest);
+    dom.passwordResetForm.addEventListener("submit", handlePasswordReset);
+
+    dom.authModeButtons.forEach((button) => {
+      button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
+    });
+
+    dom.forgotPasswordButton.addEventListener("click", () => {
+      const loginEmail = document.querySelector("#login-email").value.trim();
+      document.querySelector("#reset-email").value = loginEmail;
+      dom.authTabs.classList.add("hidden");
+      dom.loginForm.classList.add("hidden");
+      dom.signupForm.classList.add("hidden");
+      dom.resetRequestForm.classList.remove("hidden");
+      setTimeout(() => document.querySelector("#reset-email")?.focus(), 50);
+    });
+
+    dom.backToLoginButton.addEventListener("click", () => setAuthMode("login"));
     window.addEventListener("hashchange", renderRoute);
 
     dom.balanceButton.addEventListener("click", () => {
@@ -103,32 +159,89 @@
     });
   }
 
-  async function handleJoin(event) {
+  function setAuthMode(mode = "login") {
+    const isSignup = mode === "signup";
+
+    dom.authTabs.classList.remove("hidden");
+    dom.resetRequestForm.classList.add("hidden");
+    dom.loginForm.classList.toggle("hidden", isSignup);
+    dom.signupForm.classList.toggle("hidden", !isSignup);
+
+    dom.authModeButtons.forEach((button) => {
+      const isActive = button.dataset.authMode === mode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-selected", String(isActive));
+    });
+
+    const focusTarget = isSignup ? "#signup-display-name" : "#login-email";
+    setTimeout(() => document.querySelector(focusTarget)?.focus(), 50);
+  }
+
+  async function handleLogin(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const displayName = String(form.get("displayName") || "").trim();
+    const email = String(form.get("email") || "").trim();
+    const password = String(form.get("password") || "");
     const button = event.currentTarget.querySelector("button[type='submit']");
 
-    if (displayName.length < 2) {
-      showToast("Please use at least two characters.", "error");
+    setButtonLoading(button, true, "Opening the exchange…");
+    const { data, error } = await state.client.auth.signInWithPassword({ email, password });
+    setButtonLoading(button, false);
+
+    if (error) {
+      showToast(error.message, "error");
       return;
     }
 
-    setButtonLoading(button, true, "Opening the exchange…");
+    state.user = data.user;
+    await enterApp();
+    showToast("Welcome back. The markets remained irrational without you.", "success");
+  }
 
-    const { data, error } = await state.client.auth.signInAnonymously({
+  async function handleSignup(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const displayName = String(form.get("displayName") || "").trim();
+    const email = String(form.get("email") || "").trim();
+    const password = String(form.get("password") || "");
+    const passwordConfirm = String(form.get("passwordConfirm") || "");
+    const button = event.currentTarget.querySelector("button[type='submit']");
+
+    if (displayName.length < 2) {
+      showToast("Please use a display name with at least two characters.", "error");
+      return;
+    }
+
+    if (password.length < 8) {
+      showToast("Please use a password with at least eight characters.", "error");
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      showToast("Those passwords do not match.", "error");
+      return;
+    }
+
+    setButtonLoading(button, true, "Creating your account…");
+    const { data, error } = await state.client.auth.signUp({
+      email,
+      password,
       options: {
         data: { display_name: displayName },
       },
     });
-
     setButtonLoading(button, false);
 
     if (error) {
+      showToast(error.message, "error");
+      return;
+    }
+
+    if (!data.session) {
+      setAuthMode("login");
+      document.querySelector("#login-email").value = email;
       showToast(
-        error.message.includes("Anonymous sign-ins are disabled")
-          ? "Anonymous sign-ins are not enabled yet. Turn them on in Supabase Authentication settings."
-          : error.message,
+        "Account created, but Supabase is still requiring email confirmation. Disable Confirm email in the Email provider settings, then log in.",
         "error",
       );
       return;
@@ -136,19 +249,107 @@
 
     state.user = data.user;
     await enterApp();
-    showToast("You received 1,000 points of absolutely no value.", "success");
+    showToast("Account created. You received 1,000 points of absolutely no value.", "success");
   }
 
-  function showJoin() {
+  async function handleResetRequest(event) {
+    event.preventDefault();
+    const email = String(new FormData(event.currentTarget).get("email") || "").trim();
+    const button = event.currentTarget.querySelector("button[type='submit']");
+
+    setButtonLoading(button, true, "Sending…");
+    const { error } = await state.client.auth.resetPasswordForEmail(email, {
+      redirectTo: getPasswordResetRedirectUrl(),
+    });
+    setButtonLoading(button, false);
+
+    if (error) {
+      showToast(error.message, "error");
+      return;
+    }
+
+    setAuthMode("login");
+    document.querySelector("#login-email").value = email;
+    showToast("Password-reset link sent. Check your email.", "success");
+  }
+
+  async function handlePasswordReset(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const password = String(form.get("password") || "");
+    const passwordConfirm = String(form.get("passwordConfirm") || "");
+    const button = event.currentTarget.querySelector("button[type='submit']");
+
+    if (password.length < 8) {
+      showToast("Please use a password with at least eight characters.", "error");
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      showToast("Those passwords do not match.", "error");
+      return;
+    }
+
+    setButtonLoading(button, true, "Updating…");
+    const { data, error } = await state.client.auth.updateUser({ password });
+    setButtonLoading(button, false);
+
+    if (error) {
+      showToast(error.message, "error");
+      return;
+    }
+
+    state.passwordRecovery = false;
+    state.user = data.user || state.user;
+    cleanAuthUrl();
+    await enterApp();
+    showToast("Password updated. Your fictional assets are secure again.", "success");
+  }
+
+  function getPasswordResetRedirectUrl() {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  function cleanAuthUrl() {
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  function showAuth(mode = "login") {
     dom.setup.classList.add("hidden");
     dom.app.classList.add("hidden");
-    dom.join.classList.remove("hidden");
-    setTimeout(() => document.querySelector("#display-name")?.focus(), 50);
+    dom.passwordReset.classList.add("hidden");
+    dom.auth.classList.remove("hidden");
+    setAuthMode(mode);
+  }
+
+  function showPasswordReset() {
+    dom.setup.classList.add("hidden");
+    dom.app.classList.add("hidden");
+    dom.auth.classList.add("hidden");
+    dom.passwordReset.classList.remove("hidden");
+    setTimeout(() => document.querySelector("#new-password")?.focus(), 50);
+  }
+
+  function resetAppState() {
+    window.clearTimeout(state.realtimeTimer);
+    if (state.realtimeChannel && state.client) {
+      state.client.removeChannel(state.realtimeChannel);
+    }
+    state.realtimeChannel = null;
+    state.user = null;
+    state.profile = null;
+    state.profiles = [];
+    state.markets = [];
+    state.outcomes = [];
+    state.predictions = [];
+    state.payouts = [];
+    state.loading = false;
   }
 
   async function enterApp() {
     dom.setup.classList.add("hidden");
-    dom.join.classList.add("hidden");
+    dom.auth.classList.add("hidden");
+    dom.passwordReset.classList.add("hidden");
     dom.app.classList.remove("hidden");
 
     if (!window.location.hash) {
@@ -1296,7 +1497,7 @@
         <div>
           <p class="eyebrow">Your account</p>
           <h2>${escapeHtml(state.profile.display_name)}</h2>
-          <p>Anonymous account · saved in this browser</p>
+          <p>${escapeHtml(state.user?.email || "Email account")} · available across devices</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
@@ -1317,12 +1518,13 @@
             <input id="account-name" name="displayName" minlength="2" maxlength="32" value="${escapeAttribute(state.profile.display_name)}" required />
           </div>
           <p class="trade-warning">
-            Anonymous accounts cannot be recovered after you clear browser data, sign out, or switch devices.
-            Email login can be added later if cross-device access becomes important.
+            Your email and password let you access the same balance, predictions, and markets from any device.
+            To change a forgotten password, sign out and use the password-reset link on the login screen.
           </p>
         </div>
         <div class="modal-footer">
           ${state.profile.is_admin ? '<button class="button button-secondary" id="account-admin-points" type="button">Award points</button>' : ""}
+          <button class="button button-ghost" id="account-sign-out" type="button">Sign out</button>
           <button class="button button-primary" type="submit">Save name</button>
         </div>
       </form>
@@ -1331,6 +1533,23 @@
     document.querySelector("#account-admin-points")?.addEventListener("click", () => {
       closeModal();
       openAdminPointsModal();
+    });
+
+    document.querySelector("#account-sign-out").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Signing out…");
+      const { error } = await state.client.auth.signOut();
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      resetAppState();
+      showAuth("login");
+      showToast("Signed out. Your points are still imaginary, but safely stored.", "success");
     });
 
     document.querySelector("#account-form").addEventListener("submit", async (event) => {
