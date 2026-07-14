@@ -565,7 +565,8 @@ textarea::placeholder {
   top: -170px;
   border: 56px solid var(--mint);
   border-radius: 50%;
-  opacity: 0.85;
+  opacity: 0.25;
+  filter: blur(1em);
 }
 
 .hero-copy,
