@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A fictional-points prediction exchange for questions that matter only to your friends."
+    />
+    <meta name="theme-color" content="#101b18" />
+    <title>The Friend Exchange</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+
+    <div id="setup-screen" class="setup-screen hidden">
+      <section class="setup-card">
+        <p class="eyebrow">One tiny setup step</p>
+        <h1>Connect your Supabase project.</h1>
+        <p>
+          Open <code>config.js</code> and replace the two placeholder values
+          with your Supabase Project URL and Publishable key. Then refresh this
+          page.
+        </p>
+        <p class="setup-note">
+          Run <code>database.sql</code> in the Supabase SQL Editor first.
+        </p>
+      </section>
+    </div>
+
+    <div id="join-screen" class="join-screen hidden">
+      <section class="join-card">
+        <div class="brand-mark" aria-hidden="true">FX</div>
+        <p class="eyebrow">Welcome to</p>
+        <h1 id="join-app-name">The Friend Exchange</h1>
+        <p class="join-tagline" id="join-tagline">
+          Markets of consequence. Sort of.
+        </p>
+
+        <form id="join-form" class="join-form">
+          <label for="display-name">What should the exchange call you?</label>
+          <input
+            id="display-name"
+            name="displayName"
+            type="text"
+            minlength="2"
+            maxlength="32"
+            autocomplete="nickname"
+            placeholder="Mike"
+            required
+          />
+          <button class="button button-primary button-large" type="submit">
+            Enter with 1,000 points
+          </button>
+        </form>
+
+        <p class="fine-print">
+          No money. No prizes. No economic value. An alarming amount of
+          confidence.
+        </p>
+      </section>
+    </div>
+
+    <div id="app" class="app-shell hidden">
+      <header class="site-header">
+        <a class="brand" href="#/markets" aria-label="Go to active markets">
+          <span class="brand-mark brand-mark-small" aria-hidden="true">FX</span>
+          <span>
+            <strong id="header-app-name">The Friend Exchange</strong>
+            <small id="header-tagline">Markets of consequence. Sort of.</small>
+          </span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Primary navigation">
+          <a data-nav href="#/markets">Markets</a>
+          <a data-nav href="#/create">Create</a>
+          <a data-nav href="#/leaderboard">Leaderboard</a>
+          <a data-nav href="#/portfolio">My predictions</a>
+        </nav>
+
+        <button id="balance-button" class="balance-pill" type="button">
+          <span>Balance</span>
+          <strong id="header-balance">—</strong>
+        </button>
+      </header>
+
+      <main id="main-content" class="main-content" tabindex="-1"></main>
+
+      <nav class="mobile-nav" aria-label="Mobile navigation">
+        <a data-nav href="#/markets">
+          <span aria-hidden="true">◫</span>
+          Markets
+        </a>
+        <a data-nav href="#/create">
+          <span aria-hidden="true">＋</span>
+          Create
+        </a>
+        <a data-nav href="#/leaderboard">
+          <span aria-hidden="true">↗</span>
+          Leaders
+        </a>
+        <a data-nav href="#/portfolio">
+          <span aria-hidden="true">◎</span>
+          Mine
+        </a>
+      </nav>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
