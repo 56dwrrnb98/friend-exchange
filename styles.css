@@ -559,14 +559,13 @@ textarea::placeholder {
 .hero::after {
   content: "";
   position: absolute;
-  width: 360px;
-  height: 360px;
-  right: -80px;
-  top: -170px;
-  border: 56px solid var(--mint);
-  border-radius: 50%;
-  opacity: 0.25;
-  filter: blur(1em);
+  inset: 0;
+  background-image: url("img/hero-desktop.png");
+  background-repeat: no-repeat;
+  background-position: right center;
+  background-size: auto 100%;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .hero-copy,
@@ -1632,6 +1631,13 @@ textarea::placeholder {
     grid-template-columns: 1fr;
   }
 
+  .hero::after {
+    background-image: url("img/hero-mobile.png");
+    background-position: center bottom;
+    background-size: 125% auto;
+    opacity: 0.8;
+  }
+
   .market-layout {
     grid-template-columns: 1fr;
   }
@@ -1706,10 +1712,6 @@ textarea::placeholder {
 
   .hero {
     padding: 30px 24px;
-  }
-
-  .hero::after {
-    right: -170px;
   }
 
   .hero-stats {
