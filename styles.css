@@ -560,7 +560,7 @@ textarea::placeholder {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: url("/img/hero-desktop.png");
+  background-image: url("../img/hero-desktop.png");
   background-repeat: no-repeat;
   background-position: right center;
   background-size: auto 100%;
@@ -1632,7 +1632,7 @@ textarea::placeholder {
   }
 
   .hero::after {
-    background-image: url("/img/hero-mobile.png");
+    background-image: url("../img/hero-mobile.png");
     background-position: center bottom;
     background-size: 125% auto;
     opacity: 0.8;
