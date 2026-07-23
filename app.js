@@ -1031,6 +1031,12 @@
   }
 
   function renderLeaderboard() {
+    const allMarkets = getAllMarkets();
+    const resolvedMarketIds = new Set(
+      allMarkets
+        .filter((market) => market.displayStatus === "resolved")
+        .map((market) => market.id)
+    );
     const sorted = [...state.profiles].sort((a, b) => b.balance - a.balance || a.display_name.localeCompare(b.display_name));
     const availablePoints = sorted.reduce((sum, profile) => sum + profile.balance, 0);
     const lockedPoints = state.predictions
@@ -1074,17 +1080,39 @@
                 <th>Available balance</th>
                 <th>Markets created</th>
                 <th>Points currently committed</th>
+                <th title="Payouts minus points committed across resolved markets.">Consequences, Realized</th>
               </tr>
             </thead>
             <tbody>
               ${sorted.map((profile, index) => {
-                const committed = state.predictions
-                  .filter((prediction) => prediction.user_id === profile.id)
+                const profilePredictions = state.predictions.filter(
+                  (prediction) => prediction.user_id === profile.id
+                );
+                const committed = profilePredictions
                   .filter((prediction) => {
                     const market = state.markets.find((item) => item.id === prediction.market_id);
                     return market?.status === "open";
                   })
                   .reduce((sum, prediction) => sum + prediction.amount, 0);
+                const resolvedCommitted = profilePredictions
+                  .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
+                  .reduce((sum, prediction) => sum + prediction.amount, 0);
+                const resolvedPayouts = state.payouts
+                  .filter(
+                    (payout) =>
+                      payout.user_id === profile.id &&
+                      resolvedMarketIds.has(payout.market_id)
+                  )
+                  .reduce((sum, payout) => sum + payout.amount, 0);
+                const consequencesRealized = resolvedPayouts - resolvedCommitted;
+                const consequencesClass =
+                  consequencesRealized > 0
+                    ? "text-success"
+                    : consequencesRealized < 0
+                      ? "text-danger"
+                      : "";
+                const consequencesText =
+                  `${consequencesRealized > 0 ? "+" : ""}${formatNumber(consequencesRealized)} pts`;
                 const created = state.markets.filter((market) => market.creator_id === profile.id).length;
                 return `
                   <tr class="${profile.id === state.user.id ? "current-user-row" : ""}">
@@ -1099,6 +1127,7 @@
                     <td class="mono">${formatNumber(profile.balance)} pts</td>
                     <td class="mono">${created}</td>
                     <td class="mono">${formatNumber(committed)} pts</td>
+                    <td class="mono ${consequencesClass}">${consequencesText}</td>
                   </tr>
                 `;
               }).join("")}
