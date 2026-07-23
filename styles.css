@@ -623,6 +623,12 @@ textarea::placeholder {
   color: var(--paper-strong);
 }
 
+.hero .button-secondary:hover:not(:disabled) {
+  border-color: var(--paper-strong);
+  background: var(--paper-strong);
+  color: var(--ink);
+}
+
 .hero-stats {
   align-self: end;
   display: grid;
