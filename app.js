@@ -1245,6 +1245,8 @@
     const isResolved = market.displayStatus === "resolved";
     const isWinner = market.winning_outcome_id === outcome.id;
     const isVoid = market.displayStatus === "void";
+    const isNoWinnerRefund =
+      isResolved && payout?.kind === "no_winner_refund";
 
     let resultLabel = "Open";
     let valueLabel = `${formatNumber(amount)} pts committed`;
@@ -1255,12 +1257,17 @@
       resultLabel = "Voided";
       valueLabel = `${formatNumber(amount)} pts refunded`;
     }
-    if (isResolved && isWinner) {
+    if (isNoWinnerRefund) {
+      resultLabel = "Refunded";
+      resultClass = "text-success";
+      valueLabel = `${formatNumber(amount)} pts refunded`;
+    }
+    if (isResolved && isWinner && !isNoWinnerRefund) {
       resultLabel = "Won";
       resultClass = "text-success";
       valueLabel = `${formatNumber(payout?.amount || 0)} pts paid`;
     }
-    if (isResolved && !isWinner) {
+    if (isResolved && !isWinner && !isNoWinnerRefund) {
       resultLabel = "Lost";
       resultClass = "text-danger";
       valueLabel = `${formatNumber(amount)} pts committed`;
@@ -1357,7 +1364,10 @@
     const submit = document.querySelector("#prediction-form button[type='submit']");
 
     const updateEstimate = () => {
-      const amount = clamp(Math.floor(Number(input.value) || 0), 0, state.profile.balance);
+      const parsedAmount = parseWholeNumber(input.value);
+      const amount = parsedAmount === null
+        ? 0
+        : clamp(parsedAmount, 0, state.profile.balance);
       const totalAfter = market.actualTotal + amount;
       const outcomeActualAfter = outcome.actualPoints + amount;
       const displayTotalAfter = market.outcomes.reduce((sum, item) => sum + item.seed_points + item.actualPoints, 0) + amount;
@@ -1370,7 +1380,10 @@
       document.querySelector("#odds-after").textContent = formatPercent(oddsAfter);
       document.querySelector("#estimated-payout").textContent = `${formatNumber(estimatedPayout)} pts`;
       document.querySelector("#balance-after").textContent = `${formatNumber(state.profile.balance - amount)} pts`;
-      submit.disabled = amount < 1 || amount > state.profile.balance;
+      submit.disabled =
+        parsedAmount === null ||
+        amount < 1 ||
+        amount > state.profile.balance;
     };
 
     input.addEventListener("input", updateEstimate);
@@ -1389,9 +1402,9 @@
 
     document.querySelector("#prediction-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const amount = Math.floor(Number(input.value));
-      if (!Number.isInteger(amount) || amount < 1 || amount > state.profile.balance) {
-        showToast("Enter an amount within your available balance.", "error");
+      const amount = parseWholeNumber(input.value);
+      if (amount === null || amount < 1 || amount > state.profile.balance) {
+        showToast("Enter a whole-number amount within your available balance.", "error");
         return;
       }
 
@@ -1664,10 +1677,10 @@
       button.addEventListener("click", async () => {
         const userId = button.dataset.awardUser;
         const input = document.querySelector(`[data-admin-amount="${userId}"]`);
-        const amount = Math.floor(Number(input.value));
+        const amount = parseWholeNumber(input.value);
         const profile = state.profiles.find((item) => item.id === userId);
 
-        if (!Number.isInteger(amount) || amount === 0) {
+        if (amount === null || amount === 0) {
           showToast("Enter a non-zero whole-number adjustment.", "error");
           return;
         }
@@ -1802,6 +1815,11 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function parseWholeNumber(value) {
+    const number = Number(value);
+    return Number.isInteger(number) ? number : null;
   }
 
   function escapeHtml(value) {

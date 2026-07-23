@@ -2,7 +2,7 @@
 
 *A fictional-points prediction exchange for questions that matter only to your friends.*
 
-This is a complete starter app built with:
+This is the current static application built with:
 
 - Plain HTML, CSS, and JavaScript
 - Supabase for the database and email/password accounts
@@ -28,6 +28,7 @@ There is no build step, package manager, framework, or custom server.
 - Creator-controlled resolution after the closing time
 - Administrator controls for early resolution, voiding, and point adjustments
 - Activity feed, leaderboard, completed markets, and personal prediction history
+- **Consequences, Realized** on personal portfolios and the leaderboard
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile design
 
@@ -73,7 +74,12 @@ Integer rounding leftovers are distributed automatically so the entire pool is p
 
 The SQL creates all tables, indexes, security policies, profile automation, payout logic, and database functions.
 
-If you already ran `database.sql` from the earlier anonymous-account version, you may run this version again. It is designed to safely recreate the functions, policies, and trigger without deleting existing app data.
+For a new Supabase project, run the complete file once.
+
+For an existing live project, do **not** rerun `database.sql` as part of a
+front-end deployment. Treat future database changes as separately reviewed,
+transactional migrations made only after a backup and read-only live-schema
+inspection. The current Phase 1 front-end changes require no database changes.
 
 ## 2. Configure email/password authentication
 
@@ -123,7 +129,7 @@ In Supabase:
 3. Copy the **Project URL**.
 4. Copy the **Publishable key**.
 
-Open `config.js` and replace these placeholders:
+Copy `config.example.js` to `config.js`, then replace these placeholders:
 
 ```js
 window.FRIEND_EXCHANGE_CONFIG = {
@@ -137,6 +143,11 @@ window.FRIEND_EXCHANGE_CONFIG = {
 Use the **Publishable key**, not a Secret key or legacy `service_role` key.
 
 The Publishable key is expected to be visible in browser code. The included Row Level Security rules and database functions are what prevent visitors from editing balances, changing results, or bypassing the prediction rules.
+
+Do not paste the live configuration into documentation, support messages, test
+fixtures, or transfer archives. Preserve an existing production `config.js`
+unchanged unless you are intentionally moving the site to a different Supabase
+project.
 
 ## 5. Test it locally
 
@@ -228,10 +239,34 @@ friend-exchange/
 ├── styles.css       Responsive visual design
 ├── app.js           Front-end behavior, authentication, and Supabase calls
 ├── config.js        Your Supabase URL, Publishable key, and app name
+├── config.example.js Placeholder-only configuration template
 ├── database.sql     Tables, security, points, predictions, and payouts
-├── START-HERE.txt   Condensed setup checklist
+├── PROJECT_CONTEXT.md Product decisions, handoff, and known limitations
+├── tests/
+│   └── phase1.test.js Focused front-end and calculation regression tests
 └── README.md        Full setup and usage instructions
 ```
+
+`START-HERE.txt` is not part of the current source set.
+
+# Phase 1 regression checks
+
+Phase 1 intentionally makes no database changes. It:
+
+- Rejects fractional prediction and administrator-adjustment inputs instead of
+  silently rounding them down.
+- Labels no-winner-refund positions as **Refunded**.
+- Preserves the existing payout, balance, leaderboard, and
+  **Consequences, Realized** calculations.
+
+Run the focused checks with a current Node.js runtime:
+
+```bash
+node --check app.js
+node --test tests/phase1.test.js
+```
+
+The tests are local and do not connect to Supabase.
 
 # How authentication works
 
@@ -268,7 +303,10 @@ This is intentionally a small friends-only first version.
 - The default Supabase email service may have sending limits; custom SMTP can be configured later if the group grows or password-reset delivery becomes unreliable.
 - There are no comments, notifications, images, recurring point allowances, or market categories.
 - Display names are not required to be unique.
+- “All-time payouts” currently includes winner payouts and refunds.
 - The app loads the full small-community dataset at once. That is simple and appropriate for a friend group, but it would need pagination and more selective queries for a large public community.
+- The final date/time-field styling still requires acceptance testing on
+  physical iPhone Safari and supported desktop browsers.
 
 # Sensible next upgrades
 
