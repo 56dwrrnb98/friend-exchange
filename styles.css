@@ -1724,9 +1724,11 @@ textarea::placeholder {
   }
 
   .mobile-nav a {
-    display: grid;
-    place-items: center;
-    gap: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.3rem;
     min-height: 52px;
     border-radius: 12px;
     color: rgba(255, 254, 248, 0.62);
@@ -1736,8 +1738,7 @@ textarea::placeholder {
   }
 
   .mobile-nav a i {
-    padding-top: 0.5rem;
-    font-size: 1.4rem;
+    font-size: 1.25rem;
     line-height: 1;
   }
 
