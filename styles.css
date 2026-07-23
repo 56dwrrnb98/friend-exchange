@@ -1790,6 +1790,12 @@ textarea::placeholder {
     font-size: 1rem;
   }
 
+  input[type="datetime-local"]::-webkit-date-and-time-value {
+    display: flex;
+    align-items: center;
+    height: 46px;
+  }
+
   .form-field-full {
     grid-column: auto;
   }
