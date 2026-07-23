@@ -1112,11 +1112,34 @@
   }
 
   function renderPortfolio() {
+    const allMarkets = getAllMarkets();
     const userPredictions = state.predictions.filter((prediction) => prediction.user_id === state.user.id);
+    const userPayouts = state.payouts.filter((payout) => payout.user_id === state.user.id);
     const totalCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
-    const totalPayouts = state.payouts
-      .filter((payout) => payout.user_id === state.user.id)
+    const totalPayouts = userPayouts.reduce((sum, payout) => sum + payout.amount, 0);
+
+    // Net points earned or lost only after a market has been resolved.
+    // Open, closed-but-unresolved, and voided markets are excluded.
+    const resolvedMarketIds = new Set(
+      allMarkets
+        .filter((market) => market.displayStatus === "resolved")
+        .map((market) => market.id)
+    );
+    const resolvedCommitted = userPredictions
+      .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
+      .reduce((sum, prediction) => sum + prediction.amount, 0);
+    const resolvedPayouts = userPayouts
+      .filter((payout) => resolvedMarketIds.has(payout.market_id))
       .reduce((sum, payout) => sum + payout.amount, 0);
+    const consequencesRealized = resolvedPayouts - resolvedCommitted;
+    const consequencesClass =
+      consequencesRealized > 0
+        ? "text-success"
+        : consequencesRealized < 0
+          ? "text-danger"
+          : "";
+    const consequencesText =
+      `${consequencesRealized > 0 ? "+" : ""}${formatNumber(consequencesRealized)} pts`;
 
     const groups = new Map();
     userPredictions.forEach((prediction) => {
@@ -1129,7 +1152,7 @@
 
     const positions = [...groups.values()]
       .map((position) => {
-        const market = getAllMarkets().find((item) => item.id === position.marketId);
+        const market = allMarkets.find((item) => item.id === position.marketId);
         const outcome = market?.outcomes.find((item) => item.id === position.outcomeId);
         const payout = state.payouts.find((item) => item.market_id === position.marketId && item.user_id === state.user.id);
         return { ...position, market, outcome, payout };
@@ -1158,6 +1181,13 @@
         <div class="portfolio-stat">
           <span>All-time payouts</span>
           <strong>${formatNumber(totalPayouts)} pts</strong>
+        </div>
+        <div
+          class="portfolio-stat"
+          title="Payouts minus points committed across resolved markets. Open and voided markets are excluded."
+        >
+          <span>Consequences, Realized</span>
+          <strong class="${consequencesClass}">${consequencesText}</strong>
         </div>
       </div>
 

@@ -316,6 +316,30 @@ textarea {
   resize: vertical;
 }
 
+/* Prevent native date controls and grid children from forcing form overflow. */
+.form-field,
+.form-grid > * {
+  min-width: 0;
+}
+
+input[type="datetime-local"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+input[type="datetime-local"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-datetime-edit {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
 input:focus,
 textarea:focus,
 select:focus {
@@ -1293,7 +1317,7 @@ textarea::placeholder {
 
 .portfolio-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -1641,7 +1665,7 @@ textarea::placeholder {
   }
 
   .portfolio-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1731,7 +1755,16 @@ textarea::placeholder {
   }
 
   .form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  input[type="datetime-local"] {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding-right: 12px;
+    padding-left: 12px;
+    font-size: 1rem;
   }
 
   .form-field-full {
