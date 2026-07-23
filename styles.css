@@ -1753,7 +1753,12 @@ textarea::placeholder {
   }
 
   .hero {
-    padding: 30px 24px;
+    padding: 24px 24px 30px;
+  }
+
+  .hero .eyebrow {
+    margin: 0 0 1rem;
+    line-height: 1.2;
   }
 
   .hero::after {
