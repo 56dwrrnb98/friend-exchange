@@ -34,6 +34,8 @@
     predictions: [],
     payouts: [],
     marketFilter: "active",
+    leaderboardSortKey: "totalAccountValue",
+    leaderboardSortDirection: "desc",
     loading: false,
     realtimeChannel: null,
     realtimeTimer: null,
@@ -343,6 +345,8 @@
     state.outcomes = [];
     state.predictions = [];
     state.payouts = [];
+    state.leaderboardSortKey = "totalAccountValue";
+    state.leaderboardSortDirection = "desc";
     state.loading = false;
   }
 
@@ -1037,20 +1041,89 @@
         .filter((market) => market.displayStatus === "resolved")
         .map((market) => market.id)
     );
-    const sorted = [...state.profiles].sort((a, b) => b.balance - a.balance || a.display_name.localeCompare(b.display_name));
-    const availablePoints = sorted.reduce((sum, profile) => sum + profile.balance, 0);
-    const lockedPoints = state.predictions
-      .filter((prediction) => state.markets.find((market) => market.id === prediction.market_id)?.status === "open")
-      .reduce((sum, prediction) => sum + prediction.amount, 0);
-    const totalPoints = availablePoints + lockedPoints;
-    const leader = sorted[0];
+    const rows = state.profiles.map((profile) => {
+      const profilePredictions = state.predictions.filter(
+        (prediction) => prediction.user_id === profile.id
+      );
+      const committed = profilePredictions
+        .filter((prediction) => {
+          const market = state.markets.find((item) => item.id === prediction.market_id);
+          return market?.status === "open";
+        })
+        .reduce((sum, prediction) => sum + prediction.amount, 0);
+      const resolvedCommitted = profilePredictions
+        .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
+        .reduce((sum, prediction) => sum + prediction.amount, 0);
+      const resolvedPayouts = state.payouts
+        .filter(
+          (payout) =>
+            payout.user_id === profile.id &&
+            resolvedMarketIds.has(payout.market_id)
+        )
+        .reduce((sum, payout) => sum + payout.amount, 0);
+      const profitLoss = resolvedPayouts - resolvedCommitted;
+
+      return {
+        ...profile,
+        activity: profilePredictions.length,
+        committed,
+        profitLoss,
+        created: state.markets.filter((market) => market.creator_id === profile.id).length,
+        realizedReturn:
+          resolvedCommitted > 0 ? profitLoss / resolvedCommitted : null,
+        totalAccountValue: profile.balance + committed,
+      };
+    });
+    const sortKey = state.leaderboardSortKey;
+    const sortDirection = state.leaderboardSortDirection;
+    const sorted = [...rows].sort((a, b) => {
+      const aValue = a[sortKey];
+      const bValue = b[sortKey];
+
+      // A return cannot be calculated without a resolved stake. Keep those
+      // accounts below measured returns in either sort direction.
+      if (aValue === null && bValue !== null) return 1;
+      if (aValue !== null && bValue === null) return -1;
+
+      let comparison;
+      if (typeof aValue === "string") {
+        comparison = aValue.localeCompare(bValue);
+      } else {
+        comparison = (aValue ?? 0) - (bValue ?? 0);
+      }
+
+      if (comparison !== 0) return sortDirection === "asc" ? comparison : -comparison;
+      return a.display_name.localeCompare(b.display_name);
+    });
+    const totalPoints = rows.reduce((sum, profile) => sum + profile.totalAccountValue, 0);
+    const leader = [...rows].sort(
+      (a, b) =>
+        b.totalAccountValue - a.totalAccountValue ||
+        a.display_name.localeCompare(b.display_name)
+    )[0];
+    const sortableHeader = (key, label, title = "") => {
+      const isActive = sortKey === key;
+      const ariaSort = isActive
+        ? sortDirection === "asc" ? "ascending" : "descending"
+        : "none";
+      const indicator = isActive ? (sortDirection === "asc" ? "↑" : "↓") : "↕";
+
+      return `
+        <th aria-sort="${ariaSort}"${title ? ` title="${escapeAttribute(title)}"` : ""}>
+          <button class="table-sort-button" type="button" data-leaderboard-sort="${key}">
+            <span>${label}</span>
+            <span class="sort-indicator" aria-hidden="true">${indicator}</span>
+          </button>
+        </th>
+      `;
+    };
 
     dom.main.innerHTML = `
       <div class="page-header">
         <div>
           <p class="eyebrow">Leaderboard</p>
           <h1>Imaginary wealth. Real bragging rights.</h1>
-          <p>Balances include uncommitted points and any completed-market payouts.</p>
+          <p>Ranked by total account value by default. Select a column heading to choose your own measure.</p>
         </div>
         ${state.profile.is_admin ? '<button class="button button-primary" id="admin-points" type="button">Award points</button>' : ""}
       </div>
@@ -1076,44 +1149,41 @@
             <thead>
               <tr>
                 <th>Rank</th>
-                <th>Trader</th>
-                <th>Available balance</th>
-                <th>Markets created</th>
-                <th>Points currently committed</th>
-                <th title="Payouts minus points committed across resolved markets.">Consequences, Realized</th>
+                ${sortableHeader("display_name", "Trader")}
+                ${sortableHeader(
+                  "totalAccountValue",
+                  "Total account value",
+                  "Available balance plus points currently committed."
+                )}
+                ${sortableHeader("balance", "Available balance")}
+                ${sortableHeader("committed", "Points currently committed")}
+                ${sortableHeader(
+                  "profitLoss",
+                  "Profit / loss",
+                  "Net points gained or lost on resolved markets."
+                )}
+                ${sortableHeader(
+                  "realizedReturn",
+                  "Realized return",
+                  "Profit / loss divided by points committed across resolved markets."
+                )}
+                ${sortableHeader("activity", "Predictions placed")}
+                ${sortableHeader("created", "Markets created")}
               </tr>
             </thead>
             <tbody>
               ${sorted.map((profile, index) => {
-                const profilePredictions = state.predictions.filter(
-                  (prediction) => prediction.user_id === profile.id
-                );
-                const committed = profilePredictions
-                  .filter((prediction) => {
-                    const market = state.markets.find((item) => item.id === prediction.market_id);
-                    return market?.status === "open";
-                  })
-                  .reduce((sum, prediction) => sum + prediction.amount, 0);
-                const resolvedCommitted = profilePredictions
-                  .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
-                  .reduce((sum, prediction) => sum + prediction.amount, 0);
-                const resolvedPayouts = state.payouts
-                  .filter(
-                    (payout) =>
-                      payout.user_id === profile.id &&
-                      resolvedMarketIds.has(payout.market_id)
-                  )
-                  .reduce((sum, payout) => sum + payout.amount, 0);
-                const consequencesRealized = resolvedPayouts - resolvedCommitted;
-                const consequencesClass =
-                  consequencesRealized > 0
+                const profitLossClass =
+                  profile.profitLoss > 0
                     ? "text-success"
-                    : consequencesRealized < 0
+                    : profile.profitLoss < 0
                       ? "text-danger"
                       : "";
-                const consequencesText =
-                  `${consequencesRealized > 0 ? "+" : ""}${formatNumber(consequencesRealized)} pts`;
-                const created = state.markets.filter((market) => market.creator_id === profile.id).length;
+                const profitLossText =
+                  `${profile.profitLoss > 0 ? "+" : ""}${formatNumber(profile.profitLoss)} pts`;
+                const returnText = profile.realizedReturn === null
+                  ? "—"
+                  : `${profile.realizedReturn > 0 ? "+" : ""}${(profile.realizedReturn * 100).toFixed(1)}%`;
                 return `
                   <tr class="${profile.id === state.user.id ? "current-user-row" : ""}">
                     <td class="rank-cell">#${index + 1}</td>
@@ -1124,10 +1194,13 @@
                         ${profile.is_admin ? '<span class="tiny-pill">Admin</span>' : ""}
                       </div>
                     </td>
+                    <td class="mono"><strong>${formatNumber(profile.totalAccountValue)} pts</strong></td>
                     <td class="mono">${formatNumber(profile.balance)} pts</td>
-                    <td class="mono">${created}</td>
-                    <td class="mono">${formatNumber(committed)} pts</td>
-                    <td class="mono ${consequencesClass}">${consequencesText}</td>
+                    <td class="mono">${formatNumber(profile.committed)} pts</td>
+                    <td class="mono ${profitLossClass}">${profitLossText}</td>
+                    <td class="mono ${profitLossClass}">${returnText}</td>
+                    <td class="mono">${formatNumber(profile.activity)}</td>
+                    <td class="mono">${formatNumber(profile.created)}</td>
                   </tr>
                 `;
               }).join("")}
@@ -1137,6 +1210,19 @@
       </section>
     `;
 
+    document.querySelectorAll("[data-leaderboard-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextKey = button.dataset.leaderboardSort;
+        if (state.leaderboardSortKey === nextKey) {
+          state.leaderboardSortDirection =
+            state.leaderboardSortDirection === "desc" ? "asc" : "desc";
+        } else {
+          state.leaderboardSortKey = nextKey;
+          state.leaderboardSortDirection = nextKey === "display_name" ? "asc" : "desc";
+        }
+        renderLeaderboard();
+      });
+    });
     document.querySelector("#admin-points")?.addEventListener("click", openAdminPointsModal);
   }
 
@@ -1160,15 +1246,15 @@
     const resolvedPayouts = userPayouts
       .filter((payout) => resolvedMarketIds.has(payout.market_id))
       .reduce((sum, payout) => sum + payout.amount, 0);
-    const consequencesRealized = resolvedPayouts - resolvedCommitted;
-    const consequencesClass =
-      consequencesRealized > 0
+    const profitLoss = resolvedPayouts - resolvedCommitted;
+    const profitLossClass =
+      profitLoss > 0
         ? "text-success"
-        : consequencesRealized < 0
+        : profitLoss < 0
           ? "text-danger"
           : "";
-    const consequencesText =
-      `${consequencesRealized > 0 ? "+" : ""}${formatNumber(consequencesRealized)} pts`;
+    const profitLossText =
+      `${profitLoss > 0 ? "+" : ""}${formatNumber(profitLoss)} pts`;
 
     const groups = new Map();
     userPredictions.forEach((prediction) => {
@@ -1213,10 +1299,10 @@
         </div>
         <div
           class="portfolio-stat"
-          title="Payouts minus points committed across resolved markets. Open and voided markets are excluded."
+          title="Net points gained or lost on resolved markets. Open and voided markets are excluded."
         >
-          <span>Consequences, Realized</span>
-          <strong class="${consequencesClass}">${consequencesText}</strong>
+          <span>Profit / loss</span>
+          <strong class="${profitLossClass}">${profitLossText}</strong>
         </div>
       </div>
 

@@ -28,7 +28,8 @@ There is no build step, package manager, framework, or custom server.
 - Creator-controlled resolution after the closing time
 - Administrator controls for early resolution, voiding, and point adjustments
 - Activity feed, leaderboard, completed markets, and personal prediction history
-- **Consequences, Realized** on personal portfolios and the leaderboard
+- Sortable leaderboard ranked by **Total account value** by default
+- **Profit / loss** on personal portfolios and the leaderboard
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile design
 
@@ -256,8 +257,10 @@ Phase 1 intentionally makes no database changes. It:
 - Rejects fractional prediction and administrator-adjustment inputs instead of
   silently rounding them down.
 - Labels no-winner-refund positions as **Refunded**.
-- Preserves the existing payout, balance, leaderboard, and
-  **Consequences, Realized** calculations.
+- Preserves the existing payout, balance, and **Profit / loss**
+  calculations.
+- Verifies the sortable leaderboard's default **Total account value** ranking
+  and its realized-performance calculations.
 
 Run the focused checks with a current Node.js runtime:
 
