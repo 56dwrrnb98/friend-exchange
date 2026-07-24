@@ -1608,6 +1608,11 @@ textarea::placeholder {
   padding: 22px;
 }
 
+.prediction-fields {
+  display: grid;
+  gap: 16px;
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;

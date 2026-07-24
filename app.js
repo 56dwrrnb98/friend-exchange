@@ -942,7 +942,7 @@
             ${renderLivePosition(market, state.user.id)}
 
             <div class="sidebar-actions">
-              ${canPredict ? '<button class="button button-primary" id="predict-top-outcome" type="button">Place a prediction</button>' : ""}
+              ${canPredict ? '<button class="button button-primary" id="predict-outcome" type="button">Place a prediction</button>' : ""}
               ${canResolve ? '<button class="button button-mint" id="resolve-market" type="button">Resolve market</button>' : ""}
               ${canManage && market.status === "open" ? '<button class="button button-danger" id="void-market" type="button">Void and refund</button>' : ""}
               <a class="button button-secondary" href="#/markets">Back to all markets</a>
@@ -964,8 +964,8 @@
       button.addEventListener("click", () => openPredictionModal(market, Number(button.dataset.predictOutcome)));
     });
 
-    document.querySelector("#predict-top-outcome")?.addEventListener("click", () => {
-      openPredictionModal(market, sortedOutcomes[0]?.id);
+    document.querySelector("#predict-outcome")?.addEventListener("click", () => {
+      openPredictionModal(market);
     });
 
     document.querySelector("#resolve-market")?.addEventListener("click", () => openResolveModal(market));
@@ -1624,25 +1624,36 @@
   }
 
   function openPredictionModal(market, outcomeId) {
-    const outcome = market.outcomes.find((item) => item.id === outcomeId);
-    if (!outcome || market.displayStatus !== "open") return;
-
-    const defaultAmount = Math.min(100, state.profile.balance);
+    if (market.displayStatus !== "open") return;
+    const initialOutcome = market.outcomes.find((item) => item.id === outcomeId);
 
     openModal(`
       <div class="modal-header">
         <div>
           <p class="eyebrow">Place prediction</p>
-          <h2>${escapeHtml(outcome.label)}</h2>
+          <h2>Choose your position</h2>
           <p>${escapeHtml(market.question)}</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
       <form id="prediction-form">
         <div class="modal-body">
-          <div class="form-field">
-            <label for="prediction-amount">How many points?</label>
-            <input id="prediction-amount" name="amount" type="number" min="1" max="${state.profile.balance}" step="1" value="${defaultAmount}" required />
+          <div class="prediction-fields">
+            <div class="form-field">
+              <label for="prediction-outcome">Outcome</label>
+              <select id="prediction-outcome" name="outcome" required>
+                <option value=""${initialOutcome ? "" : " selected"}>Choose an outcome…</option>
+                ${market.outcomes.map((item) => `
+                  <option value="${item.id}"${item.id === initialOutcome?.id ? " selected" : ""}>
+                    ${escapeHtml(item.label)}
+                  </option>
+                `).join("")}
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="prediction-amount">How many points?</label>
+              <input id="prediction-amount" name="amount" type="number" min="1" max="${state.profile.balance}" step="1" inputmode="numeric" placeholder="Enter points" required />
+            </div>
           </div>
           <div class="quick-amounts">
             <button data-quick-amount="25" type="button">25 pts</button>
@@ -1654,7 +1665,7 @@
           <div class="trade-summary">
             <div class="trade-summary-row">
               <span>Current community odds</span>
-              <strong>${formatPercent(outcome.percent)}</strong>
+              <strong id="current-odds">—</strong>
             </div>
             <div class="trade-summary-row">
               <span>Odds after this prediction</span>
@@ -1676,19 +1687,41 @@
         </div>
         <div class="modal-footer">
           <button class="button button-secondary" data-modal-close type="button">Never mind</button>
-          <button class="button button-primary" type="submit">Commit points</button>
+          <button class="button button-primary" type="submit" disabled>Commit points</button>
         </div>
       </form>
     `);
 
+    const outcomeSelect = document.querySelector("#prediction-outcome");
     const input = document.querySelector("#prediction-amount");
     const submit = document.querySelector("#prediction-form button[type='submit']");
 
+    const getSelectedOutcome = () => {
+      const selectedId = Number(outcomeSelect.value);
+      return market.outcomes.find((item) => item.id === selectedId);
+    };
+
     const updateEstimate = () => {
+      const outcome = getSelectedOutcome();
       const parsedAmount = parseWholeNumber(input.value);
-      const amount = parsedAmount === null
-        ? 0
-        : clamp(parsedAmount, 0, state.profile.balance);
+      const amountIsValid =
+        parsedAmount !== null &&
+        parsedAmount >= 1 &&
+        parsedAmount <= state.profile.balance;
+
+      document.querySelector("#current-odds").textContent = outcome
+        ? formatPercent(outcome.percent)
+        : "—";
+
+      if (!outcome || !amountIsValid) {
+        document.querySelector("#odds-after").textContent = "—";
+        document.querySelector("#estimated-payout").textContent = "—";
+        document.querySelector("#balance-after").textContent = "—";
+        submit.disabled = true;
+        return;
+      }
+
+      const amount = parsedAmount;
       const totalAfter = market.actualTotal + amount;
       const outcomeActualAfter = outcome.actualPoints + amount;
       const displayTotalAfter = market.outcomes.reduce((sum, item) => sum + item.seed_points + item.actualPoints, 0) + amount;
@@ -1701,12 +1734,10 @@
       document.querySelector("#odds-after").textContent = formatPercent(oddsAfter);
       document.querySelector("#estimated-payout").textContent = `${formatNumber(estimatedPayout)} pts`;
       document.querySelector("#balance-after").textContent = `${formatNumber(state.profile.balance - amount)} pts`;
-      submit.disabled =
-        parsedAmount === null ||
-        amount < 1 ||
-        amount > state.profile.balance;
+      submit.disabled = false;
     };
 
+    outcomeSelect.addEventListener("change", updateEstimate);
     input.addEventListener("input", updateEstimate);
     document.querySelectorAll("[data-quick-amount]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1718,14 +1749,24 @@
     });
 
     updateEstimate();
-    input.focus();
-    input.select();
+    if (initialOutcome) {
+      input.focus();
+    } else {
+      outcomeSelect.focus();
+    }
 
     document.querySelector("#prediction-form").addEventListener("submit", async (event) => {
       event.preventDefault();
+      const outcome = getSelectedOutcome();
       const amount = parseWholeNumber(input.value);
+      if (!outcome) {
+        showToast("Choose an outcome before committing points.", "error");
+        outcomeSelect.focus();
+        return;
+      }
       if (amount === null || amount < 1 || amount > state.profile.balance) {
         showToast("Enter a whole-number amount within your available balance.", "error");
+        input.focus();
         return;
       }
 
