@@ -552,6 +552,160 @@
     return state.markets.map(enrichMarket);
   }
 
+  function calculateCurrentOutcomePayout(market, outcomeId, userId) {
+    const stakesByUser = new Map();
+    let totalPool = 0;
+
+    market.predictions.forEach((prediction) => {
+      totalPool += prediction.amount;
+      if (prediction.outcome_id !== outcomeId) return;
+      stakesByUser.set(
+        prediction.user_id,
+        (stakesByUser.get(prediction.user_id) || 0) + prediction.amount,
+      );
+    });
+
+    const winningPool = [...stakesByUser.values()].reduce((sum, stake) => sum + stake, 0);
+    if (totalPool <= 0 || winningPool <= 0 || !stakesByUser.has(userId)) return 0;
+
+    const totalPoolBigInt = BigInt(totalPool);
+    const winningPoolBigInt = BigInt(winningPool);
+    const roundedPayouts = [...stakesByUser.entries()].map(([stakeUserId, stake]) => {
+      const numerator = BigInt(stake) * totalPoolBigInt;
+      return {
+        userId: stakeUserId,
+        payout: numerator / winningPoolBigInt,
+        remainder: numerator % winningPoolBigInt,
+      };
+    });
+    const basePayoutTotal = roundedPayouts.reduce((sum, row) => sum + row.payout, 0n);
+    const leftoverPoints = Number(totalPoolBigInt - basePayoutTotal);
+
+    roundedPayouts.sort((a, b) => {
+      if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
+      if (a.userId === b.userId) return 0;
+      return a.userId < b.userId ? -1 : 1;
+    });
+
+    roundedPayouts.slice(0, leftoverPoints).forEach((row) => {
+      row.payout += 1n;
+    });
+
+    return Number(roundedPayouts.find((row) => row.userId === userId)?.payout || 0n);
+  }
+
+  function getLivePositionScenarios(market, userId) {
+    const userPredictions = market.predictions.filter(
+      (prediction) => prediction.user_id === userId,
+    );
+    const totalCommitted = userPredictions.reduce(
+      (sum, prediction) => sum + prediction.amount,
+      0,
+    );
+    if (totalCommitted <= 0) return [];
+
+    const outcomeTotals = new Map();
+    const userOutcomeTotals = new Map();
+    market.predictions.forEach((prediction) => {
+      outcomeTotals.set(
+        prediction.outcome_id,
+        (outcomeTotals.get(prediction.outcome_id) || 0) + prediction.amount,
+      );
+      if (prediction.user_id === userId) {
+        userOutcomeTotals.set(
+          prediction.outcome_id,
+          (userOutcomeTotals.get(prediction.outcome_id) || 0) + prediction.amount,
+        );
+      }
+    });
+
+    const scenarios = market.outcomes
+      .filter((outcome) => (userOutcomeTotals.get(outcome.id) || 0) > 0)
+      .map((outcome) => {
+        const payout = calculateCurrentOutcomePayout(market, outcome.id, userId);
+        return {
+          kind: "backed",
+          outcomeIds: [outcome.id],
+          title: `If “${outcome.label}” wins`,
+          payout,
+          net: payout - totalCommitted,
+          detail: `${formatNumber(payout)} pts returned`,
+        };
+      });
+
+    const otherBackedOutcomes = market.outcomes.filter(
+      (outcome) =>
+        (userOutcomeTotals.get(outcome.id) || 0) === 0 &&
+        (outcomeTotals.get(outcome.id) || 0) > 0,
+    );
+    if (otherBackedOutcomes.length > 0) {
+      scenarios.push({
+        kind: "other",
+        outcomeIds: otherBackedOutcomes.map((outcome) => outcome.id),
+        title: otherBackedOutcomes.length === 1
+          ? `If “${otherBackedOutcomes[0].label}” wins`
+          : "If any other backed outcome wins",
+        payout: 0,
+        net: -totalCommitted,
+        detail: "No payout",
+      });
+    }
+
+    const emptyOutcomes = market.outcomes.filter(
+      (outcome) => (outcomeTotals.get(outcome.id) || 0) === 0,
+    );
+    if (emptyOutcomes.length > 0) {
+      scenarios.push({
+        kind: "refund",
+        outcomeIds: emptyOutcomes.map((outcome) => outcome.id),
+        title: emptyOutcomes.length === 1
+          ? `If “${emptyOutcomes[0].label}” wins`
+          : "If an outcome with no predictions wins",
+        payout: totalCommitted,
+        net: 0,
+        detail: `${formatNumber(totalCommitted)} pts refunded`,
+      });
+    }
+
+    return scenarios;
+  }
+
+  function renderLivePosition(market, userId) {
+    const scenarios = getLivePositionScenarios(market, userId);
+    if (scenarios.length === 0 || market.status !== "open") return "";
+
+    return `
+      <section class="live-position" aria-labelledby="live-position-heading">
+        <div class="live-position-heading">
+          <p class="eyebrow" id="live-position-heading">Your live position</p>
+          <span>If resolved now</span>
+        </div>
+        <div class="live-position-list">
+          ${scenarios.map((scenario) => {
+            const resultClass =
+              scenario.net > 0
+                ? "text-success"
+                : scenario.net < 0
+                  ? "text-danger"
+                  : "";
+            const netText =
+              `${scenario.net > 0 ? "+" : ""}${formatNumber(scenario.net)} pts`;
+            return `
+              <div class="live-position-row">
+                <span class="live-position-label">${escapeHtml(scenario.title)}</span>
+                <span class="live-position-result">
+                  <strong class="${resultClass}">${netText}</strong>
+                  <small>${escapeHtml(scenario.detail)}</small>
+                </span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        <p class="live-position-note">Current pool only. Updates as predictions are added.</p>
+      </section>
+    `;
+  }
+
   function renderMarkets() {
     const markets = getAllMarkets();
     const activeMarkets = markets.filter((market) => ["open", "closed"].includes(market.displayStatus));
@@ -784,6 +938,8 @@
                 <strong>${market.displayStatus === "resolved" ? escapeHtml(market.winner?.label || "Resolved") : market.displayStatus === "void" ? "Voided" : "Pending"}</strong>
               </div>
             </div>
+
+            ${renderLivePosition(market, state.user.id)}
 
             <div class="sidebar-actions">
               ${canPredict ? '<button class="button button-primary" id="predict-top-outcome" type="button">Place a prediction</button>' : ""}
