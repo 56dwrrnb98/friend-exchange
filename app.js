@@ -1095,12 +1095,66 @@
       if (comparison !== 0) return sortDirection === "asc" ? comparison : -comparison;
       return a.display_name.localeCompare(b.display_name);
     });
-    const totalPoints = rows.reduce((sum, profile) => sum + profile.totalAccountValue, 0);
-    const leader = [...rows].sort(
-      (a, b) =>
-        b.totalAccountValue - a.totalAccountValue ||
-        a.display_name.localeCompare(b.display_name)
-    )[0];
+    const leadingAccountValue = rows.length
+      ? Math.max(...rows.map((profile) => profile.totalAccountValue))
+      : 0;
+    const leaderNames = rows
+      .filter((profile) => profile.totalAccountValue === leadingAccountValue)
+      .map((profile) => profile.display_name)
+      .sort((a, b) => a.localeCompare(b));
+    const leaderDisplay = leaderNames.length > 2
+      ? `${leaderNames.length}-way tie`
+      : leaderNames.join(" & ") || "Nobody";
+    const leaderPoints = leaderNames.length > 1
+      ? `${formatNumber(leadingAccountValue)} points each`
+      : `${formatNumber(leadingAccountValue)} points`;
+
+    // A wager is a member's cumulative commitment to one outcome in one
+    // market. Voided markets are excluded because those wagers were canceled.
+    const eligibleMarketIds = new Set(
+      state.markets
+        .filter((market) => market.status !== "void")
+        .map((market) => market.id)
+    );
+    const eligiblePredictions = state.predictions.filter(
+      (prediction) => eligibleMarketIds.has(prediction.market_id)
+    );
+    const wagerPositions = new Map();
+
+    eligiblePredictions.forEach((prediction) => {
+      const key = `${prediction.user_id}:${prediction.market_id}:${prediction.outcome_id}`;
+      const existing = wagerPositions.get(key) || {
+        amount: 0,
+        userId: prediction.user_id,
+      };
+      existing.amount += prediction.amount;
+      wagerPositions.set(key, existing);
+    });
+
+    const largestWagerAmount = wagerPositions.size
+      ? Math.max(...[...wagerPositions.values()].map((position) => position.amount))
+      : 0;
+    const largestWagerHolderIds = new Set(
+      [...wagerPositions.values()]
+        .filter((position) => position.amount === largestWagerAmount)
+        .map((position) => position.userId)
+    );
+    const largestWagerNames = state.profiles
+      .filter((profile) => largestWagerHolderIds.has(profile.id))
+      .map((profile) => profile.display_name)
+      .sort((a, b) => a.localeCompare(b));
+    const largestWagerDisplay = largestWagerNames.length > 2
+      ? `${largestWagerNames.length}-way tie`
+      : largestWagerNames.join(" & ");
+
+    const now = Date.now();
+    const rollingThirtyDayCutoff = now - 30 * 24 * 60 * 60 * 1000;
+    const pointsWageredLastThirtyDays = eligiblePredictions
+      .filter((prediction) => {
+        const placedAt = new Date(prediction.created_at).getTime();
+        return placedAt >= rollingThirtyDayCutoff && placedAt <= now;
+      })
+      .reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortableHeader = (key, label, title = "") => {
       const isActive = sortKey === key;
       const ariaSort = isActive
@@ -1128,18 +1182,21 @@
         ${state.profile.is_admin ? '<button class="button button-primary" id="admin-points" type="button">Award points</button>' : ""}
       </div>
 
-      <div class="portfolio-grid">
-        <div class="portfolio-stat">
-          <span>Exchange members</span>
-          <strong>${formatNumber(sorted.length)}</strong>
-        </div>
-        <div class="portfolio-stat">
-          <span>Points in circulation</span>
-          <strong>${formatNumber(totalPoints)}</strong>
-        </div>
+      <div class="portfolio-grid leaderboard-stats">
         <div class="portfolio-stat">
           <span>Current robber baron</span>
-          <strong>${escapeHtml(leader?.display_name || "Nobody")}</strong>
+          <strong title="${escapeAttribute(leaderNames.join(", "))}">${escapeHtml(leaderDisplay)}</strong>
+          <small>${leaderPoints}</small>
+        </div>
+        <div class="portfolio-stat">
+          <span>Largest wager</span>
+          <strong>${largestWagerAmount > 0 ? `${formatNumber(largestWagerAmount)} points` : "—"}</strong>
+          <small${largestWagerNames.length > 2 ? ` title="${escapeAttribute(largestWagerNames.join(", "))}"` : ""}>${largestWagerAmount > 0 ? escapeHtml(largestWagerDisplay) : "no wagers yet"}</small>
+        </div>
+        <div class="portfolio-stat">
+          <span>Points wagered</span>
+          <strong>${pointsWageredLastThirtyDays > 0 ? `${formatNumber(pointsWageredLastThirtyDays)} points` : "—"}</strong>
+          <small>${pointsWageredLastThirtyDays > 0 ? "last 30 days" : "no wagers yet"}</small>
         </div>
       </div>
 

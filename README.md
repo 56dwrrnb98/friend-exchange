@@ -29,6 +29,8 @@ There is no build step, package manager, framework, or custom server.
 - Administrator controls for early resolution, voiding, and point adjustments
 - Activity feed, leaderboard, completed markets, and personal prediction history
 - Sortable leaderboard ranked by **Total account value** by default
+- Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
+  and **Points wagered** during the rolling last 30 days
 - **Profit / loss** on personal portfolios and the leaderboard
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile design
@@ -261,6 +263,8 @@ Phase 1 intentionally makes no database changes. It:
   calculations.
 - Verifies the sortable leaderboard's default **Total account value** ranking
   and its realized-performance calculations.
+- Verifies cumulative largest-wager, rolling 30-day activity, tie, and empty-state
+  calculations for the leaderboard highlights.
 
 Run the focused checks with a current Node.js runtime:
 

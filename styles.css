@@ -1376,6 +1376,10 @@ textarea::placeholder {
   margin-bottom: 24px;
 }
 
+.portfolio-grid.leaderboard-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .portfolio-stat {
   padding: 20px;
   border: 1px solid var(--line-strong);
@@ -1393,8 +1397,18 @@ textarea::placeholder {
 }
 
 .portfolio-stat strong {
+  display: block;
   font-family: var(--font-mono);
   font-size: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.portfolio-stat small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .position-list {
@@ -1812,6 +1826,10 @@ textarea::placeholder {
 
   .stats-grid,
   .portfolio-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-grid.leaderboard-stats {
     grid-template-columns: 1fr;
   }
 
