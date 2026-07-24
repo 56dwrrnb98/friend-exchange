@@ -34,7 +34,7 @@
     predictions: [],
     payouts: [],
     marketFilter: "active",
-    leaderboardSortKey: "totalAccountValue",
+    leaderboardSortKey: "profitLoss",
     leaderboardSortDirection: "desc",
     loading: false,
     realtimeChannel: null,
@@ -345,7 +345,7 @@
     state.outcomes = [];
     state.predictions = [];
     state.payouts = [];
-    state.leaderboardSortKey = "totalAccountValue";
+    state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
     state.loading = false;
   }
@@ -1068,6 +1068,7 @@
         activity: profilePredictions.length,
         committed,
         profitLoss,
+        resolvedCommitted,
         created: state.markets.filter((market) => market.creator_id === profile.id).length,
         realizedReturn:
           resolvedCommitted > 0 ? profitLoss / resolvedCommitted : null,
@@ -1076,9 +1077,9 @@
     });
     const sortKey = state.leaderboardSortKey;
     const sortDirection = state.leaderboardSortDirection;
-    const sorted = [...rows].sort((a, b) => {
-      const aValue = a[sortKey];
-      const bValue = b[sortKey];
+    const compareRows = (a, b, key = sortKey, direction = sortDirection) => {
+      const aValue = a[key];
+      const bValue = b[key];
 
       // A return cannot be calculated without a resolved stake. Keep those
       // accounts below measured returns in either sort direction.
@@ -1092,22 +1093,43 @@
         comparison = (aValue ?? 0) - (bValue ?? 0);
       }
 
-      if (comparison !== 0) return sortDirection === "asc" ? comparison : -comparison;
+      if (comparison !== 0) return direction === "asc" ? comparison : -comparison;
+
+      // Profit / loss is the official rank. Break ties with realized return,
+      // then the amount of resolved participation behind that performance.
+      if (key === "profitLoss") {
+        if (a.realizedReturn === null && b.realizedReturn !== null) return 1;
+        if (a.realizedReturn !== null && b.realizedReturn === null) return -1;
+
+        const returnComparison = (a.realizedReturn ?? 0) - (b.realizedReturn ?? 0);
+        if (returnComparison !== 0) return -returnComparison;
+
+        const stakeComparison = a.resolvedCommitted - b.resolvedCommitted;
+        if (stakeComparison !== 0) return -stakeComparison;
+      }
+
       return a.display_name.localeCompare(b.display_name);
-    });
-    const leadingAccountValue = rows.length
-      ? Math.max(...rows.map((profile) => profile.totalAccountValue))
-      : 0;
+    };
+    const sorted = [...rows].sort(compareRows);
+    const performanceLeaders = [...rows].sort(
+      (a, b) => compareRows(a, b, "profitLoss", "desc")
+    );
+    const leadingProfile = performanceLeaders[0] || null;
     const leaderNames = rows
-      .filter((profile) => profile.totalAccountValue === leadingAccountValue)
+      .filter(
+        (profile) =>
+          leadingProfile &&
+          profile.profitLoss === leadingProfile.profitLoss &&
+          profile.realizedReturn === leadingProfile.realizedReturn &&
+          profile.resolvedCommitted === leadingProfile.resolvedCommitted
+      )
       .map((profile) => profile.display_name)
       .sort((a, b) => a.localeCompare(b));
     const leaderDisplay = leaderNames.length > 2
       ? `${leaderNames.length}-way tie`
       : leaderNames.join(" & ") || "Nobody";
-    const leaderPoints = leaderNames.length > 1
-      ? `${formatNumber(leadingAccountValue)} points each`
-      : `${formatNumber(leadingAccountValue)} points`;
+    const leadingProfitLoss = leadingProfile?.profitLoss || 0;
+    const leaderPoints = `${leadingProfitLoss > 0 ? "+" : ""}${formatNumber(leadingProfitLoss)} points realized`;
 
     // A wager is a member's cumulative commitment to one outcome in one
     // market. Voided markets are excluded because those wagers were canceled.
@@ -1177,7 +1199,7 @@
         <div>
           <p class="eyebrow">Leaderboard</p>
           <h1>Imaginary wealth. Real bragging rights.</h1>
-          <p>Ranked by total account value by default. Select a column heading to choose your own measure.</p>
+          <p>Ranked by profit / loss on resolved markets. Select a column heading to choose your own measure.</p>
         </div>
         ${state.profile.is_admin ? '<button class="button button-primary" id="admin-points" type="button">Award points</button>' : ""}
       </div>
@@ -1684,7 +1706,7 @@
         <div class="summary-stack">
           <div class="card" style="padding:16px">
             <strong>1. Everyone starts with 1,000 points.</strong>
-            <p class="muted" style="font-size:.78rem;margin:6px 0 0">They cannot be purchased, sold, redeemed, or used to improve your credit score.</p>
+            <p class="muted" style="font-size:.78rem;margin:6px 0 0">Active traders receive another 100 points on the first of each month after signing in within the previous 90 days. Points cannot be purchased, sold, or redeemed.</p>
           </div>
           <div class="card" style="padding:16px">
             <strong>2. Put points on the outcome you expect.</strong>

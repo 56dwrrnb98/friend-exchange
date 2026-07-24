@@ -124,6 +124,44 @@ create table if not exists public.point_transactions (
     check (kind in ('initial_grant', 'prediction', 'payout', 'refund', 'admin_adjustment'))
 );
 
+alter table public.point_transactions
+  add column if not exists allowance_period date;
+
+alter table public.point_transactions
+  drop constraint if exists point_transactions_kind_valid;
+
+alter table public.point_transactions
+  add constraint point_transactions_kind_valid
+    check (
+      kind in (
+        'initial_grant',
+        'prediction',
+        'payout',
+        'refund',
+        'admin_adjustment',
+        'monthly_allowance'
+      )
+    );
+
+alter table public.point_transactions
+  drop constraint if exists point_transactions_allowance_period_valid;
+
+alter table public.point_transactions
+  add constraint point_transactions_allowance_period_valid
+    check (
+      (
+        kind = 'monthly_allowance'
+        and allowance_period is not null
+        and extract(day from allowance_period) = 1
+        and amount = 100
+        and market_id is null
+      )
+      or (
+        kind <> 'monthly_allowance'
+        and allowance_period is null
+      )
+    );
+
 -- ----------------------------------------------------------------
 -- INDEXES
 -- ----------------------------------------------------------------
@@ -148,6 +186,10 @@ create index if not exists predictions_outcome_idx
 
 create index if not exists point_transactions_user_idx
   on public.point_transactions (user_id, created_at desc);
+
+create unique index if not exists point_transactions_monthly_allowance_unique
+  on public.point_transactions (user_id, allowance_period)
+  where kind = 'monthly_allowance';
 
 -- ----------------------------------------------------------------
 -- NEW EMAIL/PASSWORD USER PROFILE TRIGGER
@@ -793,6 +835,75 @@ begin
 end;
 $$;
 
+create or replace function public.grant_monthly_allowance(
+  p_allowance_period date default (
+    date_trunc('month', timezone('America/Chicago', now()))::date
+  )
+)
+returns table (
+  grant_period date,
+  recipient_count bigint,
+  points_granted bigint
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_period_start timestamp with time zone;
+begin
+  if p_allowance_period is null
+     or extract(day from p_allowance_period) <> 1 then
+    raise exception 'Allowance period must be the first day of a month.';
+  end if;
+
+  v_period_start :=
+    p_allowance_period::timestamp at time zone 'America/Chicago';
+
+  return query
+  with eligible_accounts as (
+    select profile.id
+    from public.profiles as profile
+    join auth.users as auth_user
+      on auth_user.id = profile.id
+    where auth_user.last_sign_in_at >= v_period_start - interval '90 days'
+      and auth_user.last_sign_in_at <= now()
+  ),
+  new_allowances as (
+    insert into public.point_transactions (
+      user_id,
+      amount,
+      kind,
+      note,
+      allowance_period
+    )
+    select
+      eligible.id,
+      100,
+      'monthly_allowance',
+      'Monthly active-trader allowance',
+      p_allowance_period
+    from eligible_accounts as eligible
+    on conflict (user_id, allowance_period)
+      where kind = 'monthly_allowance'
+      do nothing
+    returning user_id, amount
+  ),
+  credited_accounts as (
+    update public.profiles as profile
+    set balance = profile.balance + allowance.amount
+    from new_allowances as allowance
+    where profile.id = allowance.user_id
+    returning allowance.amount
+  )
+  select
+    p_allowance_period,
+    count(*)::bigint,
+    coalesce(sum(credited.amount), 0)::bigint
+  from credited_accounts as credited;
+end;
+$$;
+
 -- ----------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- Users may read community data. All writes go through the functions
@@ -883,6 +994,7 @@ revoke all on function public.place_prediction(bigint, bigint, bigint) from publ
 revoke all on function public.resolve_market(bigint, bigint) from public, anon;
 revoke all on function public.void_market(bigint) from public, anon;
 revoke all on function public.award_points(uuid, bigint, text) from public, anon;
+revoke all on function public.grant_monthly_allowance(date) from public, anon, authenticated;
 
 grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.create_market(text, text, timestamptz, text[]) to authenticated;
@@ -892,6 +1004,20 @@ grant execute on function public.void_market(bigint) to authenticated;
 grant execute on function public.award_points(uuid, bigint, text) to authenticated;
 
 commit;
+
+-- ----------------------------------------------------------------
+-- MONTHLY ACTIVE-TRADER ALLOWANCE
+-- 06:05 UTC is 00:05 CST / 01:05 CDT on the first day of the month.
+-- Reusing this job name safely updates the existing schedule.
+-- ----------------------------------------------------------------
+
+create extension if not exists pg_cron;
+
+select cron.schedule(
+  'friend-exchange-monthly-allowance',
+  '5 6 1 * *',
+  'select public.grant_monthly_allowance();'
+);
 
 -- ----------------------------------------------------------------
 -- OPTIONAL REALTIME SETUP

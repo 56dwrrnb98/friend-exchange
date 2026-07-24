@@ -17,6 +17,7 @@ There is no build step, package manager, framework, or custom server.
 - Password-reset emails and an in-app new-password screen
 - Email verification intentionally disabled for immediate access
 - 1,000 starting points per person
+- 100-point monthly allowance for anyone signed in within the preceding 90 days
 - Markets with 2–10 outcomes
 - Yes/No questions are simply two-outcome markets
 - Public community odds that respond to point totals
@@ -28,7 +29,7 @@ There is no build step, package manager, framework, or custom server.
 - Creator-controlled resolution after the closing time
 - Administrator controls for early resolution, voiding, and point adjustments
 - Activity feed, leaderboard, completed markets, and personal prediction history
-- Sortable leaderboard ranked by **Total account value** by default
+- Sortable leaderboard ranked by realized **Profit / loss** by default
 - Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
   and **Points wagered** during the rolling last 30 days
 - **Profit / loss** on personal portfolios and the leaderboard
@@ -75,14 +76,16 @@ Integer rounding leftovers are distributed automatically so the entire pool is p
 5. Copy the entire contents of `database.sql` into the editor.
 6. Click **Run**.
 
-The SQL creates all tables, indexes, security policies, profile automation, payout logic, and database functions.
+The SQL creates all tables, indexes, security policies, profile automation,
+payout logic, database functions, and the monthly allowance schedule.
 
 For a new Supabase project, run the complete file once.
 
-For an existing live project, do **not** rerun `database.sql` as part of a
-front-end deployment. Treat future database changes as separately reviewed,
-transactional migrations made only after a backup and read-only live-schema
-inspection. The current Phase 1 front-end changes require no database changes.
+For an existing live project, do **not** rerun `database.sql`. Back up the
+database, inspect the live schema, and then run
+`migrations/20260724_monthly_allowance.sql` once in the SQL Editor. The
+migration adds the retry-safe allowance ledger and schedules the award for
+06:05 UTC on the first of each month, which is 00:05 CST or 01:05 CDT.
 
 ## 2. Configure email/password authentication
 
@@ -244,6 +247,8 @@ friend-exchange/
 ├── config.js        Your Supabase URL, Publishable key, and app name
 ├── config.example.js Placeholder-only configuration template
 ├── database.sql     Tables, security, points, predictions, and payouts
+├── migrations/
+│   └── 20260724_monthly_allowance.sql Existing-database allowance migration
 ├── PROJECT_CONTEXT.md Product decisions, handoff, and known limitations
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
@@ -252,17 +257,19 @@ friend-exchange/
 
 `START-HERE.txt` is not part of the current source set.
 
-# Phase 1 regression checks
+# Regression checks
 
-Phase 1 intentionally makes no database changes. It:
+The focused checks:
 
 - Rejects fractional prediction and administrator-adjustment inputs instead of
   silently rounding them down.
 - Labels no-winner-refund positions as **Refunded**.
 - Preserves the existing payout, balance, and **Profit / loss**
   calculations.
-- Verifies the sortable leaderboard's default **Total account value** ranking
-  and its realized-performance calculations.
+- Verifies the sortable leaderboard's default **Profit / loss** ranking,
+  tie-breakers, and realized-performance calculations.
+- Verifies that the allowance remains restricted to recent sign-ins and has
+  one ledger entry per trader and month.
 - Verifies cumulative largest-wager, rolling 30-day activity, tie, and empty-state
   calculations for the leaderboard highlights.
 
@@ -279,6 +286,8 @@ The tests are local and do not connect to Supabase.
 
 - Registration calls Supabase email/password sign-up and sends the display name as user metadata.
 - The database trigger creates the matching public profile and grants 1,000 starting points.
+- Supabase Cron grants 100 points on the first of each month to accounts whose
+  latest sign-in was within the preceding 90 days.
 - Supabase stores the login session in the browser and refreshes it automatically.
 - Logging into another device with the same email and password returns the same Supabase user ID, so the same profile, balance, predictions, and markets are loaded.
 - Password recovery sends an email through Supabase. The link returns to the app, opens the new-password screen, and updates the logged-in user's password.
@@ -308,7 +317,7 @@ This is intentionally a small friends-only first version.
 - Email verification is disabled, so registration does not prove ownership of the entered email address.
 - There is no invite code or email allowlist yet.
 - The default Supabase email service may have sending limits; custom SMTP can be configured later if the group grows or password-reset delivery becomes unreliable.
-- There are no comments, notifications, images, recurring point allowances, or market categories.
+- There are no comments, notifications, images, or market categories.
 - Display names are not required to be unique.
 - “All-time payouts” currently includes winner payouts and refunds.
 - The app loads the full small-community dataset at once. That is simple and appropriate for a friend group, but it would need pagination and more selective queries for a large public community.
@@ -319,10 +328,9 @@ This is intentionally a small friends-only first version.
 
 1. Add a shared invite code or email allowlist.
 2. Add comments and market updates.
-3. Add a weekly point allowance for low-balance users.
-4. Add categories and search.
-5. Add creator avatars or ridiculous profile statistics.
-6. Add an admin resolution log or two-step confirmation for disputed results.
+3. Add categories and search.
+4. Add creator avatars or ridiculous profile statistics.
+5. Add an admin resolution log or two-step confirmation for disputed results.
 
 # Disclaimer
 
