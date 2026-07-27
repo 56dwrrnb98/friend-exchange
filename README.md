@@ -13,9 +13,10 @@ There is no build step, package manager, framework, or custom server.
 ## What is included
 
 - Required display name, email, and password registration
+- Registration restricted to administrator-approved email addresses
+- Email confirmation before first sign-in
 - Normal email/password login from multiple devices
 - Password-reset emails and an in-app new-password screen
-- Email verification intentionally disabled for immediate access
 - 1,000 starting points per person
 - 100-point monthly allowance for anyone signed in within the preceding 90 days
 - Markets with 2–10 outcomes
@@ -27,7 +28,7 @@ There is no build step, package manager, framework, or custom server.
 - Proportional pari-mutuel payouts from the full real-point pool
 - Automatic refunds when nobody selected the winning outcome
 - Creator-controlled resolution after the closing time
-- Administrator controls for early resolution, voiding, and point adjustments
+- Administrator controls for invitations, early resolution, voiding, and point adjustments
 - Activity feed, leaderboard, completed markets, and personal prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
 - Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
@@ -82,10 +83,19 @@ payout logic, database functions, and the monthly allowance schedule.
 For a new Supabase project, run the complete file once.
 
 For an existing live project, do **not** rerun `database.sql`. Back up the
-database, inspect the live schema, and then run
-`migrations/20260724_monthly_allowance.sql` once in the SQL Editor. The
-migration adds the retry-safe allowance ledger and schedules the award for
-06:05 UTC on the first of each month, which is 00:05 CST or 01:05 CDT.
+database, inspect the live schema, and run only the migrations that have not
+already been applied:
+
+1. `migrations/20260724_monthly_allowance.sql` adds the retry-safe allowance
+   ledger and schedules the award for 06:05 UTC on the first of each month,
+   which is 00:05 CST or 01:05 CDT.
+2. `migrations/20260727_email_allowlist.sql` adds the approved-email registry,
+   grandfathers existing accounts, and creates the secure signup hook and
+   administrator functions.
+
+The email-allowlist migration does not enable the Auth hook automatically.
+Complete the authentication steps below after publishing the matching front-end
+files.
 
 ## 2. Configure email/password authentication
 
@@ -95,14 +105,43 @@ In the Supabase dashboard:
 2. Open **Providers** or **Sign In / Providers**.
 3. Open the **Email** provider.
 4. Make sure email/password sign-in is enabled.
-5. Turn **Confirm email** off.
+5. Turn **Confirm email** on.
 6. Save the provider settings.
 
 Leave **Anonymous Sign-Ins** disabled. This version does not use anonymous accounts.
 
-With email confirmation disabled, a new user receives a session immediately after registration and can enter the exchange without opening a confirmation email.
+New users must follow the confirmation link before they can enter the exchange.
+Existing accounts remain active.
 
-> Security note: disabling email confirmation is convenient for a small friends-only site, but it means the app does not verify that a person owns the email address entered during registration. Password-reset emails still go to that address.
+### Configure outbound authentication email
+
+Configure a custom SMTP provider under **Authentication → Email → SMTP
+Settings** before enabling confirmation. Supabase's built-in mailer is intended
+for testing and may not deliver to ordinary friend addresses. Test both a
+password-reset message and a signup-confirmation message.
+
+### Enable the approved-email hook
+
+After running the migration:
+
+1. On a brand-new project with no accounts, add the first administrator email
+   before enabling the hook:
+
+   ```sql
+   insert into public.approved_signup_emails (email)
+   values (lower('you@example.com'));
+   ```
+
+   Existing-project migrations already grandfather all current accounts.
+2. Open **Authentication → Hooks**.
+3. Find **Before User Created**.
+4. Choose the Postgres function
+   `public.hook_require_approved_email`.
+5. Enable and save the hook.
+
+The hook rejects unapproved addresses before an Auth user or public profile is
+created. Do not substitute a browser-only email check; the database hook is the
+security boundary.
 
 ## 3. Configure the site and password-reset URLs
 
@@ -188,7 +227,7 @@ Add that URL to the Supabase redirect allowlist before testing password recovery
 1. Open the site.
 2. Choose **Create account**.
 3. Enter your display name, email, and a password of at least eight characters.
-4. You should enter the app immediately and receive 1,000 points.
+4. Follow the confirmation email and enter the app with 1,000 points.
 5. Return to the Supabase SQL Editor.
 6. Run this query with your real login email:
 
@@ -203,6 +242,10 @@ where profile.id = auth_user.id
 Refresh the website. You should now see administrator controls.
 
 Using the email address is safer than using a display name because display names do not have to be unique.
+
+Open **Administration**, add a test email to the invitation registry, and
+confirm that only that address can register. Existing accounts appear
+automatically as joined records after the allowlist migration.
 
 ## 7. Test password recovery
 
@@ -233,7 +276,8 @@ If the email link opens the wrong page, check **Authentication → URL Configura
 8. Save.
 9. Copy the published URL into Supabase's **Site URL** and **Redirect URLs** settings.
 
-Because anyone with the URL can create an account, share it only with the people you intend to invite. A shared invite code can be added later if needed.
+Only addresses in the administrator-managed invitation registry can create an
+account, but the public site URL may still be shared freely.
 
 ---
 
@@ -248,7 +292,8 @@ friend-exchange/
 ├── config.example.js Placeholder-only configuration template
 ├── database.sql     Tables, security, points, predictions, and payouts
 ├── migrations/
-│   └── 20260724_monthly_allowance.sql Existing-database allowance migration
+│   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
+│   └── 20260727_email_allowlist.sql Existing-database allowlist migration
 ├── PROJECT_CONTEXT.md Product decisions, handoff, and known limitations
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
@@ -270,6 +315,8 @@ The focused checks:
   tie-breakers, and realized-performance calculations.
 - Verifies that the allowance remains restricted to recent sign-ins and has
   one ledger entry per trader and month.
+- Verifies the approved-email hook, admin invitation registry, and
+  confirmation-aware signup interface remain present.
 - Verifies cumulative largest-wager, rolling 30-day activity, tie, and empty-state
   calculations for the leaderboard highlights.
 
@@ -285,7 +332,11 @@ The tests are local and do not connect to Supabase.
 # How authentication works
 
 - Registration calls Supabase email/password sign-up and sends the display name as user metadata.
+- The Before User Created hook rejects addresses that are not in
+  `approved_signup_emails`.
 - The database trigger creates the matching public profile and grants 1,000 starting points.
+- Supabase sends a confirmation link through the configured custom SMTP
+  provider; the account can sign in after following it.
 - Supabase Cron grants 100 points on the first of each month to accounts whose
   latest sign-in was within the preceding 90 days.
 - Supabase stores the login session in the browser and refreshes it automatically.
@@ -304,6 +355,7 @@ The browser is **not** allowed to directly:
 - Change a market result
 - Create outcomes outside the validated market-creation process
 - Award itself points
+- Read or edit the approved-email registry
 
 Instead, the front end calls PostgreSQL functions through Supabase RPC. Those functions check the signed-in user, available balance, market status, closing time, outcome ownership, creator permissions, and administrator permissions inside the database.
 
@@ -313,10 +365,11 @@ The critical balance-changing functions also use row locks, so two simultaneous 
 
 This is intentionally a small friends-only first version.
 
-- Anyone who has the public site URL can register.
-- Email verification is disabled, so registration does not prove ownership of the entered email address.
-- There is no invite code or email allowlist yet.
-- The default Supabase email service may have sending limits; custom SMTP can be configured later if the group grows or password-reset delivery becomes unreliable.
+- The invitation registry approves addresses but does not send a separate
+  invitation message; the administrator still tells friends when they may
+  register.
+- Confirmation and password recovery depend on the configured custom SMTP
+  provider and correct Supabase redirect URLs.
 - There are no comments, notifications, images, or market categories.
 - Display names are not required to be unique.
 - “All-time payouts” currently includes winner payouts and refunds.
@@ -326,11 +379,10 @@ This is intentionally a small friends-only first version.
 
 # Sensible next upgrades
 
-1. Add a shared invite code or email allowlist.
-2. Add comments and market updates.
-3. Add categories and search.
-4. Add creator avatars or ridiculous profile statistics.
-5. Add an admin resolution log or two-step confirmation for disputed results.
+1. Add comments and market updates.
+2. Add categories and search.
+3. Add creator avatars or ridiculous profile statistics.
+4. Add an admin resolution log or two-step confirmation for disputed results.
 
 # Disclaimer
 

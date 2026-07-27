@@ -13,6 +13,9 @@
     authModeButtons: document.querySelectorAll("[data-auth-mode]"),
     loginForm: document.querySelector("#login-form"),
     signupForm: document.querySelector("#signup-form"),
+    signupConfirmation: document.querySelector("#signup-confirmation"),
+    signupConfirmationEmail: document.querySelector("#signup-confirmation-email"),
+    confirmationBackToLogin: document.querySelector("#confirmation-back-to-login"),
     resetRequestForm: document.querySelector("#reset-request-form"),
     passwordReset: document.querySelector("#password-reset-screen"),
     passwordResetForm: document.querySelector("#password-reset-form"),
@@ -22,6 +25,9 @@
     toastRoot: document.querySelector("#toast-root"),
     headerBalance: document.querySelector("#header-balance"),
     balanceButton: document.querySelector("#balance-button"),
+    adminNavLink: document.querySelector("#admin-nav-link"),
+    adminMobileNavLink: document.querySelector("#admin-mobile-nav-link"),
+    mobileNav: document.querySelector(".mobile-nav"),
   };
 
   const state = {
@@ -142,6 +148,7 @@
     });
 
     dom.backToLoginButton.addEventListener("click", () => setAuthMode("login"));
+    dom.confirmationBackToLogin.addEventListener("click", () => setAuthMode("login"));
     window.addEventListener("hashchange", renderRoute);
 
     dom.balanceButton.addEventListener("click", () => {
@@ -165,6 +172,7 @@
     const isSignup = mode === "signup";
 
     dom.authTabs.classList.remove("hidden");
+    dom.signupConfirmation.classList.add("hidden");
     dom.resetRequestForm.classList.add("hidden");
     dom.loginForm.classList.toggle("hidden", isSignup);
     dom.signupForm.classList.toggle("hidden", !isSignup);
@@ -230,22 +238,18 @@
       password,
       options: {
         data: { display_name: displayName },
+        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
     setButtonLoading(button, false);
 
     if (error) {
-      showToast(error.message, "error");
+      showToast(getSignupErrorMessage(error), "error");
       return;
     }
 
     if (!data.session) {
-      setAuthMode("login");
-      document.querySelector("#login-email").value = email;
-      showToast(
-        "Account created, but Supabase is still requiring email confirmation. Disable Confirm email in the Email provider settings, then log in.",
-        "error",
-      );
+      showSignupConfirmation(email);
       return;
     }
 
@@ -310,6 +314,35 @@
 
   function getPasswordResetRedirectUrl() {
     return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  function getAuthRedirectUrl() {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  function getSignupErrorMessage(error) {
+    const message = String(error?.message || "");
+    const normalized = message.toLowerCase();
+
+    if (
+      normalized.includes("invitation list") ||
+      normalized.includes("not approved") ||
+      normalized.includes("not invited")
+    ) {
+      return "That email address has not been approved for The Friend Exchange.";
+    }
+
+    return message || "The account could not be created.";
+  }
+
+  function showSignupConfirmation(email) {
+    dom.authTabs.classList.add("hidden");
+    dom.loginForm.classList.add("hidden");
+    dom.signupForm.classList.add("hidden");
+    dom.resetRequestForm.classList.add("hidden");
+    dom.signupConfirmation.classList.remove("hidden");
+    dom.signupConfirmationEmail.textContent = email;
+    dom.confirmationBackToLogin.focus();
   }
 
   function cleanAuthUrl() {
@@ -433,6 +466,10 @@
 
   function updateHeader() {
     dom.headerBalance.textContent = `${formatNumber(state.profile?.balance || 0)} pts`;
+    const isAdmin = Boolean(state.profile?.is_admin);
+    dom.adminNavLink.classList.toggle("hidden", !isAdmin);
+    dom.adminMobileNavLink.classList.toggle("hidden", !isAdmin);
+    dom.mobileNav.classList.toggle("admin-visible", isAdmin);
   }
 
   function renderLoading() {
@@ -490,6 +527,13 @@
         break;
       case "portfolio":
         renderPortfolio();
+        break;
+      case "admin":
+        if (state.profile.is_admin) {
+          renderAdmin();
+        } else {
+          renderNotFound();
+        }
         break;
       case "markets":
       default:
@@ -1612,6 +1656,248 @@
     `;
   }
 
+  async function renderAdmin() {
+    if (!state.profile?.is_admin) {
+      renderNotFound();
+      return;
+    }
+
+    dom.main.innerHTML = `
+      <div class="page-header">
+        <div>
+          <p class="eyebrow">Administrator</p>
+          <h1>Exchange operations.</h1>
+          <p>Loading the invitation registry and its formidable paper trail.</p>
+        </div>
+      </div>
+      <div class="loading-grid">
+        <div class="loading-card skeleton"></div>
+        <div class="loading-card skeleton"></div>
+      </div>
+    `;
+
+    const { data, error } = await state.client.rpc("list_approved_signup_emails");
+
+    if (getRoute().page !== "admin") return;
+
+    if (error) {
+      dom.main.innerHTML = `
+        <section class="empty-state">
+          <div class="empty-state-icon">!</div>
+          <h2>The invitation desk is temporarily unattended.</h2>
+          <p>${escapeHtml(error.message || "The invitation registry could not be loaded.")}</p>
+          <button class="button button-primary" id="retry-admin-button" type="button">Try again</button>
+        </section>
+      `;
+      document.querySelector("#retry-admin-button")?.addEventListener("click", renderAdmin);
+      return;
+    }
+
+    dom.main.innerHTML = buildAdminInvitationMarkup(data || []);
+    bindAdminInvitationEvents(data || []);
+  }
+
+  function buildAdminInvitationMarkup(invitations) {
+    const joinedCount = invitations.filter(
+      (invitation) => invitation.registered_user_id && invitation.confirmed_at
+    ).length;
+    const awaitingCount = invitations.filter(
+      (invitation) => invitation.registered_user_id && !invitation.confirmed_at
+    ).length;
+    const availableCount = invitations.filter(
+      (invitation) => !invitation.registered_user_id
+    ).length;
+
+    const rows = invitations.map((invitation) => {
+      const isRegistered = Boolean(invitation.registered_user_id);
+      const isConfirmed = Boolean(invitation.confirmed_at);
+      const status = isConfirmed
+        ? { label: "Joined", className: "status-resolved" }
+        : isRegistered
+          ? { label: "Awaiting confirmation", className: "status-closed" }
+          : { label: "Approved", className: "status-open" };
+      const addedBy = invitation.added_by_display_name
+        || (isRegistered ? "Existing account" : "Administrator");
+      const traderName = invitation.registered_display_name
+        ? `<span class="muted">${escapeHtml(invitation.registered_display_name)}</span>`
+        : "";
+
+      return `
+        <tr>
+          <td>
+            <div class="invitation-email">
+              <strong>${escapeHtml(invitation.email)}</strong>
+              ${traderName}
+            </div>
+          </td>
+          <td><span class="status-pill ${status.className}">${status.label}</span></td>
+          <td>${escapeHtml(addedBy)}</td>
+          <td class="mono">${invitation.added_at ? escapeHtml(formatDateTime(invitation.added_at)) : "—"}</td>
+          <td>
+            ${isRegistered
+              ? '<span class="muted">Account retained</span>'
+              : `<button class="button button-ghost button-small" data-remove-invitation="${escapeAttribute(invitation.email)}" type="button">Remove</button>`}
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <div class="page-header">
+        <div>
+          <p class="eyebrow">Administrator</p>
+          <h1>Exchange operations.</h1>
+          <p>Approve the addresses permitted to establish an imaginary financial presence.</p>
+        </div>
+        <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
+      </div>
+
+      <div class="portfolio-grid admin-stats">
+        <div class="portfolio-stat">
+          <span>Ready to register</span>
+          <strong>${formatNumber(availableCount)}</strong>
+          <small>approved addresses</small>
+        </div>
+        <div class="portfolio-stat">
+          <span>Awaiting confirmation</span>
+          <strong>${formatNumber(awaitingCount)}</strong>
+          <small>accounts created</small>
+        </div>
+        <div class="portfolio-stat">
+          <span>Joined traders</span>
+          <strong>${formatNumber(joinedCount)}</strong>
+          <small>confirmed accounts</small>
+        </div>
+      </div>
+
+      <section class="panel invitation-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Approve an email address</h2>
+            <p>The person can register after approval. Supabase sends their confirmation email when they create the account.</p>
+          </div>
+        </div>
+        <form id="approve-email-form" class="invitation-form">
+          <div class="form-field">
+            <label for="approved-email">Email address</label>
+            <input id="approved-email" name="email" type="email" maxlength="254" autocomplete="off" placeholder="friend@example.com" required />
+          </div>
+          <button class="button button-primary" type="submit">Approve email</button>
+        </form>
+      </section>
+
+      <section class="table-card">
+        <div class="admin-table-heading">
+          <div>
+            <h2>Invitation registry</h2>
+            <p>Registered accounts remain in the ledger and cannot be removed here.</p>
+          </div>
+          <span class="tiny-pill">${formatNumber(invitations.length)} ${pluralize(invitations.length, "record")}</span>
+        </div>
+        ${invitations.length ? `
+          <div class="table-scroll">
+            <table class="data-table invitation-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Approved by</th>
+                  <th>Approved on</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        ` : `
+          <div class="empty-state compact-empty-state">
+            <div class="empty-state-icon">@</div>
+            <h2>No approved addresses yet.</h2>
+            <p>Add the first friend above before enabling invitation-only registration.</p>
+          </div>
+        `}
+      </section>
+    `;
+  }
+
+  function bindAdminInvitationEvents(invitations) {
+    document.querySelector("#admin-award-points")?.addEventListener("click", openAdminPointsModal);
+
+    document.querySelector("#approve-email-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email = String(new FormData(event.currentTarget).get("email") || "").trim();
+      const submit = event.currentTarget.querySelector("button[type='submit']");
+      const wasAlreadyApproved = invitations.some(
+        (invitation) => invitation.email.toLowerCase() === email.toLowerCase()
+      );
+
+      setButtonLoading(submit, true, "Approving…");
+      const { error } = await state.client.rpc("add_approved_signup_email", {
+        p_email: email,
+      });
+      setButtonLoading(submit, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      await renderAdmin();
+      showToast(
+        wasAlreadyApproved
+          ? `${email} is already in the invitation registry.`
+          : `${email} may now create an account.`,
+        "success",
+      );
+    });
+
+    document.querySelectorAll("[data-remove-invitation]").forEach((button) => {
+      button.addEventListener("click", () => {
+        openRemoveInvitationModal(button.dataset.removeInvitation);
+      });
+    });
+  }
+
+  function openRemoveInvitationModal(email) {
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Remove approval</p>
+          <h2>Withdraw this invitation?</h2>
+          <p>${escapeHtml(email)}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0">
+          This address will no longer be able to create an account. Existing registered accounts are never removed by this action.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Keep approval</button>
+        <button class="button button-danger" id="confirm-remove-invitation" type="button">Remove approval</button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-remove-invitation")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Removing…");
+      const { error } = await state.client.rpc("remove_approved_signup_email", {
+        p_email: email,
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      await renderAdmin();
+      showToast(`${email} is no longer approved to register.`, "success");
+    });
+  }
+
   function renderNotFound() {
     dom.main.innerHTML = `
       <section class="empty-state">
@@ -1957,16 +2243,16 @@
           </p>
         </div>
         <div class="modal-footer">
-          ${state.profile.is_admin ? '<button class="button button-secondary" id="account-admin-points" type="button">Award points</button>' : ""}
+          ${state.profile.is_admin ? '<button class="button button-secondary" id="account-admin" type="button">Administration</button>' : ""}
           <button class="button button-ghost" id="account-sign-out" type="button">Sign out</button>
           <button class="button button-primary" type="submit">Save name</button>
         </div>
       </form>
     `);
 
-    document.querySelector("#account-admin-points")?.addEventListener("click", () => {
+    document.querySelector("#account-admin")?.addEventListener("click", () => {
       closeModal();
-      openAdminPointsModal();
+      window.location.hash = "#/admin";
     });
 
     document.querySelector("#account-sign-out").addEventListener("click", async (event) => {

@@ -145,6 +145,19 @@
           </button>
         </form>
 
+        <section id="signup-confirmation" class="auth-message hidden" aria-live="polite">
+          <p class="eyebrow">One final formality</p>
+          <h2>Check your inbox.</h2>
+          <p>
+            We sent a confirmation link to
+            <strong id="signup-confirmation-email"></strong>.
+            Follow it to enter the exchange and receive your opening balance.
+          </p>
+          <button id="confirmation-back-to-login" class="button button-secondary" type="button">
+            Back to log in
+          </button>
+        </section>
+
         <form id="reset-request-form" class="join-form auth-form hidden">
           <div class="auth-message">
             <p class="eyebrow">Account recovery</p>
@@ -233,6 +246,7 @@
           <a data-nav href="#/create">Create</a>
           <a data-nav href="#/leaderboard">Leaderboard</a>
           <a data-nav href="#/portfolio">My predictions</a>
+          <a id="admin-nav-link" class="hidden" data-nav href="#/admin">Administration</a>
         </nav>
 
         <button id="balance-button" class="balance-pill" type="button">
@@ -259,6 +273,10 @@
         <a data-nav href="#/portfolio">
           <i class="fa-solid fa-circle-user" aria-hidden="true"></i>
           Profile
+        </a>
+        <a id="admin-mobile-nav-link" class="hidden" data-nav href="#/admin">
+          <i class="fa-solid fa-user-shield" aria-hidden="true"></i>
+          Admin
         </a>
       </nav>
     </div>

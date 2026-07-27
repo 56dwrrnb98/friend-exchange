@@ -283,6 +283,18 @@ svg {
   line-height: 1.55;
 }
 
+#signup-confirmation > p:not(.eyebrow) {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+#signup-confirmation .button {
+  width: 100%;
+  margin-top: 16px;
+}
+
 .join-form label,
 .form-field label,
 .field-label {
@@ -1428,6 +1440,68 @@ textarea::placeholder {
   border-bottom: 0;
 }
 
+.admin-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 20px;
+}
+
+.invitation-panel {
+  margin-bottom: 20px;
+}
+
+.invitation-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.invitation-form .form-field {
+  flex: 1;
+}
+
+.invitation-form .button {
+  min-height: 48px;
+}
+
+.admin-table-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-table-heading h2,
+.admin-table-heading p {
+  margin: 0;
+}
+
+.admin-table-heading p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.invitation-table td:last-child {
+  text-align: right;
+}
+
+.invitation-email {
+  display: grid;
+  gap: 3px;
+}
+
+.invitation-email .muted {
+  font-size: 0.7rem;
+}
+
+.compact-empty-state {
+  min-height: 260px;
+  border: 0;
+  border-radius: 0;
+}
+
 .rank-cell {
   width: 66px;
   font-family: var(--font-mono);
@@ -1850,6 +1924,10 @@ textarea::placeholder {
     backdrop-filter: blur(18px);
   }
 
+  .mobile-nav.admin-visible {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
   .mobile-nav a {
     display: flex;
     align-items: center;
@@ -1912,6 +1990,20 @@ textarea::placeholder {
 
   .portfolio-grid.leaderboard-stats {
     grid-template-columns: 1fr;
+  }
+
+  .portfolio-grid.admin-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .invitation-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-table-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .form-grid {
