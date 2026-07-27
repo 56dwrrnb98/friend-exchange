@@ -40,6 +40,7 @@
     predictions: [],
     payouts: [],
     marketFilter: "active",
+    portfolioFilter: "all",
     leaderboardSortKey: "profitLoss",
     leaderboardSortDirection: "desc",
     loading: false,
@@ -378,6 +379,7 @@
     state.outcomes = [];
     state.predictions = [];
     state.payouts = [];
+    state.portfolioFilter = "all";
     state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
     state.loading = false;
@@ -1559,7 +1561,25 @@
         return { ...position, market, outcome, payout };
       })
       .filter((position) => position.market && position.outcome)
-      .sort((a, b) => new Date(b.latest) - new Date(a.latest));
+      .map((position) => ({
+        ...position,
+        category: getPositionCategory(position),
+      }))
+      .sort((a, b) => {
+        const activePriority = Number(b.category === "active") - Number(a.category === "active");
+        if (activePriority !== 0) return activePriority;
+        return new Date(b.latest) - new Date(a.latest);
+      });
+    const positionCounts = {
+      all: positions.length,
+      active: positions.filter((position) => position.category === "active").length,
+      won: positions.filter((position) => position.category === "won").length,
+      lost: positions.filter((position) => position.category === "lost").length,
+      refunded: positions.filter((position) => position.category === "refunded").length,
+    };
+    const filteredPositions = state.portfolioFilter === "all"
+      ? positions
+      : positions.filter((position) => position.category === state.portfolioFilter);
 
     dom.main.innerHTML = `
       <div class="page-header">
@@ -1599,16 +1619,80 @@
         </div>
       </div>
 
+      <div class="filter-row" role="group" aria-label="Filter your predictions">
+        ${portfolioFilterButton("all", "All", positionCounts.all)}
+        ${portfolioFilterButton("active", "Active", positionCounts.active)}
+        ${portfolioFilterButton("won", "Won", positionCounts.won)}
+        ${portfolioFilterButton("lost", "Lost", positionCounts.lost)}
+        ${portfolioFilterButton("refunded", "Refunded", positionCounts.refunded)}
+      </div>
+
       <section class="position-list">
-        ${positions.length ? positions.map(renderPositionCard).join("") : `
-          <div class="empty-state">
-            <div class="empty-state-icon">0</div>
-            <h2>No predictions yet.</h2>
-            <p>Your reputation remains pristine only because it remains untested.</p>
-            <a class="button button-primary" href="#/markets">Browse markets</a>
-          </div>
-        `}
+        ${filteredPositions.length
+          ? filteredPositions.map(renderPositionCard).join("")
+          : renderNoPortfolioPositions(state.portfolioFilter, positions.length > 0)}
       </section>
+    `;
+
+    document.querySelectorAll("[data-portfolio-filter]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.portfolioFilter = button.dataset.portfolioFilter;
+        renderPortfolio();
+      });
+    });
+  }
+
+  function getPositionCategory(position) {
+    const { market, outcome, payout } = position;
+    if (["open", "closed"].includes(market.displayStatus)) return "active";
+    if (
+      market.displayStatus === "void" ||
+      (market.displayStatus === "resolved" && payout?.kind === "no_winner_refund")
+    ) {
+      return "refunded";
+    }
+    if (market.displayStatus === "resolved") {
+      return market.winning_outcome_id === outcome.id ? "won" : "lost";
+    }
+    return "active";
+  }
+
+  function portfolioFilterButton(value, label, count) {
+    return `
+      <button
+        class="filter-chip ${state.portfolioFilter === value ? "active" : ""}"
+        data-portfolio-filter="${value}"
+        type="button"
+      >
+        ${label} · ${count}
+      </button>
+    `;
+  }
+
+  function renderNoPortfolioPositions(filter, hasAnyPositions) {
+    if (!hasAnyPositions) {
+      return `
+        <div class="empty-state">
+          <div class="empty-state-icon">0</div>
+          <h2>No predictions yet.</h2>
+          <p>Your reputation remains pristine only because it remains untested.</p>
+          <a class="button button-primary" href="#/markets">Browse markets</a>
+        </div>
+      `;
+    }
+
+    const labels = {
+      active: "active",
+      won: "winning",
+      lost: "losing",
+      refunded: "refunded",
+    };
+    return `
+      <div class="empty-state">
+        <div class="empty-state-icon">0</div>
+        <h2>No ${labels[filter] || "matching"} positions.</h2>
+        <p>Try another category to review the rest of your record.</p>
+      </div>
     `;
   }
 

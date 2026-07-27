@@ -34,12 +34,14 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Automatic refunds when nobody selected the winning outcome
 - Creator-controlled resolution after the closing time
 - Administrator controls for invitations, early resolution, voiding, and point adjustments
-- Activity feed, leaderboard, completed markets, and personal prediction history
+- Activity feed, leaderboard, completed markets, and status-filtered personal
+  prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
 - Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
   and **Points wagered** during the rolling last 30 days
 - Current balance, points currently committed, all-time committed, and
   **Profit / loss** on personal portfolios
+- Portfolio filters for **All**, **Active**, **Won**, **Lost**, and **Refunded**
 - **Profit / loss** on the leaderboard
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile design
