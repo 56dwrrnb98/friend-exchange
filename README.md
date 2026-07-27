@@ -120,6 +120,23 @@ Settings** before enabling confirmation. Supabase's built-in mailer is intended
 for testing and may not deliver to ordinary friend addresses. Test both a
 password-reset message and a signup-confirmation message.
 
+One option is [Resend](https://resend.com):
+
+1. Create a Resend account and add a domain you control.
+2. Add the DNS records supplied by Resend, then wait for SPF and DKIM to show as
+   verified. Configure DMARC as recommended by your email provider.
+3. Create a Resend API key for SMTP and keep it private.
+4. In Supabase, open **Authentication → Email → SMTP Settings** and enter:
+   - **Host:** `smtp.resend.com`
+   - **Port:** `465` or `587`
+   - **Username:** `resend`
+   - **Password:** the Resend API key
+   - **Sender email:** an address on the verified domain, such as
+     `friendexchange@yourdomain.com`
+   - **Sender name:** a recognizable name for the exchange
+5. Save the SMTP settings and send both a password-reset email and a new-account
+   confirmation email to verify delivery.
+
 ### Enable the approved-email hook
 
 After running the migration:
