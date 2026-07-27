@@ -1477,10 +1477,15 @@ textarea::placeholder {
   margin: 0;
 }
 
+.admin-table-heading h2 {
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+}
+
 .admin-table-heading p {
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.8rem;
 }
 
 .invitation-table td:last-child {

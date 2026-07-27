@@ -2,6 +2,8 @@
 
 *A fictional-points prediction exchange for questions that matter only to your friends.*
 
+Last verified against the canonical workspace: **July 27, 2026**
+
 This is the current static application built with:
 
 - Plain HTML, CSS, and JavaScript
@@ -9,6 +11,9 @@ This is the current static application built with:
 - GitHub Pages (or any static host) for publishing
 
 There is no build step, package manager, framework, or custom server.
+
+For the authoritative product rules, brand voice, visual system, architecture,
+production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 
 ## What is included
 
@@ -33,9 +38,36 @@ There is no build step, package manager, framework, or custom server.
 - Sortable leaderboard ranked by realized **Profit / loss** by default
 - Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
   and **Points wagered** during the rolling last 30 days
-- **Profit / loss** on personal portfolios and the leaderboard
+- Current balance, points currently committed, all-time committed, and
+  **Profit / loss** on personal portfolios
+- **Profit / loss** on the leaderboard
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile design
+
+## Current production status
+
+Confirmed in production:
+
+- GitHub Pages hosting
+- Registration restricted to approved email addresses
+- Email confirmation before first sign-in
+- Password reset
+- Desktop date/time-field rendering
+- Physical iPhone Safari date/time-field rendering
+
+Configured but not yet exercised on a first-of-month run:
+
+- The monthly active-trader allowance cron
+
+Not yet verified:
+
+- Real-time automatic refresh across multiple simultaneously open browsers
+
+“Real-time” means that an open browser should refresh its displayed data after
+another trader creates a market, commits points, resolves or voids a market, or
+changes another published record. The subscription and database publication
+configuration are present, but this behavior has not yet been confirmed in
+production.
 
 ## Important model note
 
@@ -117,8 +149,12 @@ Existing accounts remain active.
 
 Configure a custom SMTP provider under **Authentication → Email → SMTP
 Settings** before enabling confirmation. Supabase's built-in mailer is intended
-for testing and may not deliver to ordinary friend addresses. Test both a
-password-reset message and a signup-confirmation message.
+only for testing, has a low rate limit, and ordinarily sends only to addresses
+belonging to members of the Supabase project team. A custom SMTP provider is
+therefore required for normal friend addresses. Test both a password-reset
+message and a signup-confirmation message.
+
+Reference: [Supabase custom SMTP documentation](https://supabase.com/docs/guides/auth/auth-smtp).
 
 One option is [Resend](https://resend.com):
 
@@ -160,6 +196,8 @@ The hook rejects unapproved addresses before an Auth user or public profile is
 created. Do not substitute a browser-only email check; the database hook is the
 security boundary.
 
+Reference: [Supabase Before User Created hook documentation](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook).
+
 ## 3. Configure the site and password-reset URLs
 
 Password-reset emails must be allowed to redirect back to your app.
@@ -181,6 +219,8 @@ https://YOUR-GITHUB-NAME.github.io/friend-exchange/
 Use the actual URL shown in your browser. The app sends password-reset users back to the current page's origin and path.
 
 If your local server opens a different address, such as `http://localhost:8000/`, add that address instead. You may keep both local and published URLs in the allowlist.
+
+Reference: [Supabase redirect URL documentation](https://supabase.com/docs/guides/auth/redirect-urls).
 
 ## 4. Add your project information
 
@@ -279,22 +319,30 @@ If the email link opens the wrong page, check **Authentication → URL Configura
 ## 8. Publish with GitHub Pages
 
 1. Create a new GitHub repository.
-2. Upload these files:
+2. Upload the canonical project folder. The files required by the browser are:
    - `index.html`
    - `styles.css`
    - `app.js`
    - `config.js`
-   - `database.sql` is optional on the published site, but useful to keep in the repository
-3. Commit the files to the `main` branch.
-4. Open the repository's **Settings**.
-5. Select **Pages**.
-6. Under **Build and deployment**, choose **Deploy from a branch**.
-7. Choose the `main` branch and `/ (root)` folder.
-8. Save.
-9. Copy the published URL into Supabase's **Site URL** and **Redirect URLs** settings.
+3. Keep the following source and operational files in the repository as well:
+   - `config.example.js`
+   - `database.sql`
+   - `migrations/`
+   - `tests/`
+   - `README.md`
+   - `PROJECT_CONTEXT.md`
+4. Commit the files to the `main` branch.
+5. Open the repository's **Settings**.
+6. Select **Pages**.
+7. Under **Build and deployment**, choose **Deploy from a branch**.
+8. Choose the `main` branch and `/ (root)` folder.
+9. Save.
+10. Copy the published URL into Supabase's **Site URL** and **Redirect URLs** settings.
 
 Only addresses in the administrator-managed invitation registry can create an
 account, but the public site URL may still be shared freely.
+
+Reference: [GitHub Pages publishing-source documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
 
 ---
 
@@ -311,13 +359,11 @@ friend-exchange/
 ├── migrations/
 │   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
 │   └── 20260727_email_allowlist.sql Existing-database allowlist migration
-├── PROJECT_CONTEXT.md Product decisions, handoff, and known limitations
+├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
 └── README.md        Full setup and usage instructions
 ```
-
-`START-HERE.txt` is not part of the current source set.
 
 # Regression checks
 
@@ -345,6 +391,11 @@ node --test tests/phase1.test.js
 ```
 
 The tests are local and do not connect to Supabase.
+
+As of July 27, 2026, all 16 focused tests pass. Measured `app.js` line
+coverage is 43.43%, so these checks are regression protection rather than a
+complete integration suite. The SQL checks verify that critical definitions are
+present; they do not execute PostgreSQL or prove live RLS behavior.
 
 # How authentication works
 
@@ -389,10 +440,14 @@ This is intentionally a small friends-only first version.
   provider and correct Supabase redirect URLs.
 - There are no comments, notifications, images, or market categories.
 - Display names are not required to be unique.
-- “All-time payouts” currently includes winner payouts and refunds.
 - The app loads the full small-community dataset at once. That is simple and appropriate for a friend group, but it would need pagination and more selective queries for a large public community.
-- The final date/time-field styling still requires acceptance testing on
-  physical iPhone Safari and supported desktop browsers.
+- Real-time cross-browser refresh is configured but has not been verified in
+  production.
+- The first scheduled monthly allowance run has not occurred yet.
+- Modals do not currently trap keyboard focus or restore focus when closed.
+- The Supabase browser library is pinned only to major version 2, and external
+  CDN assets do not currently use Subresource Integrity or a Content Security
+  Policy.
 
 # Sensible next upgrades
 

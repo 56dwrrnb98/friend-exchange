@@ -1510,7 +1510,14 @@
     const userPredictions = state.predictions.filter((prediction) => prediction.user_id === state.user.id);
     const userPayouts = state.payouts.filter((payout) => payout.user_id === state.user.id);
     const totalCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
-    const totalPayouts = userPayouts.reduce((sum, payout) => sum + payout.amount, 0);
+    const unresolvedMarketIds = new Set(
+      state.markets
+        .filter((market) => market.status === "open")
+        .map((market) => market.id)
+    );
+    const currentlyCommitted = userPredictions
+      .filter((prediction) => unresolvedMarketIds.has(prediction.market_id))
+      .reduce((sum, prediction) => sum + prediction.amount, 0);
 
     // Net points earned or lost only after a market has been resolved.
     // Open, closed-but-unresolved, and voided markets are excluded.
@@ -1569,12 +1576,12 @@
           <strong>${formatNumber(state.profile.balance)} pts</strong>
         </div>
         <div class="portfolio-stat">
-          <span>All-time committed</span>
-          <strong>${formatNumber(totalCommitted)} pts</strong>
+          <span>Points currently committed</span>
+          <strong>${formatNumber(currentlyCommitted)} pts</strong>
         </div>
         <div class="portfolio-stat">
-          <span>All-time payouts</span>
-          <strong>${formatNumber(totalPayouts)} pts</strong>
+          <span>All-time committed</span>
+          <strong>${formatNumber(totalCommitted)} pts</strong>
         </div>
         <div
           class="portfolio-stat"
