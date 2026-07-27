@@ -334,6 +334,13 @@ textarea {
   min-width: 0;
 }
 
+.form-field small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
 input[type="datetime-local"] {
   -webkit-appearance: none;
   appearance: none;
@@ -1633,12 +1640,21 @@ textarea::placeholder {
 .modal {
   width: min(100%, 520px);
   max-height: min(88vh, 760px);
+  max-height: min(88dvh, 760px);
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--radius-lg);
   background: var(--paper-strong);
   box-shadow: 0 30px 100px rgba(0, 0, 0, 0.32);
   animation: modal-in 160ms ease-out;
+}
+
+.admin-points-modal {
+  width: min(100%, 480px);
+}
+
+.admin-points-summary {
+  margin-top: 20px;
 }
 
 @keyframes modal-in {
@@ -1775,24 +1791,6 @@ textarea::placeholder {
   width: 18px;
   min-height: 18px;
   accent-color: var(--ink);
-}
-
-.admin-list {
-  display: grid;
-  gap: 9px;
-}
-
-.admin-user-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px 80px;
-  gap: 8px;
-  align-items: center;
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--line);
-}
-
-.admin-user-row:last-child {
-  border-bottom: 0;
 }
 
 .toast-root {
@@ -2056,19 +2054,51 @@ textarea::placeholder {
   .modal {
     width: 100%;
     max-height: 92vh;
+    max-height: min(
+      92dvh,
+      calc(100dvh - env(safe-area-inset-top) - 12px)
+    );
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
     border-radius: 24px 24px 0 0;
+  }
+
+  .modal > form {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .modal-header,
+  .modal-footer {
+    flex: 0 0 auto;
+  }
+
+  .modal > .modal-body,
+  .modal > form > .modal-body {
+    min-height: 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-footer {
+    padding-bottom: max(22px, env(safe-area-inset-bottom));
+  }
+
+  .admin-points-modal .modal-header {
+    padding-top: 18px;
+  }
+
+  .admin-points-modal .modal-header h2 {
+    font-size: 1.2rem;
   }
 
   .quick-amounts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .admin-user-row {
-    grid-template-columns: minmax(0, 1fr) 84px;
-  }
-
-  .admin-user-row .button {
-    grid-column: 1 / -1;
   }
 
   .toast-root {

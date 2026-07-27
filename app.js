@@ -1403,7 +1403,6 @@
           <h1>Imaginary wealth. Real bragging rights.</h1>
           <p>Ranked by profit / loss on resolved markets. Select a column heading to choose your own measure.</p>
         </div>
-        ${state.profile.is_admin ? '<button class="button button-primary" id="admin-points" type="button">Award points</button>' : ""}
       </div>
 
       <div class="portfolio-grid leaderboard-stats">
@@ -1504,7 +1503,6 @@
         renderLeaderboard();
       });
     });
-    document.querySelector("#admin-points")?.addEventListener("click", openAdminPointsModal);
   }
 
   function renderPortfolio() {
@@ -2391,63 +2389,137 @@
       <div class="modal-header">
         <div>
           <p class="eyebrow">Administrator</p>
-          <h2>Award emergency liquidity.</h2>
-          <p>Positive or negative adjustments are allowed. Do not become the Federal Reserve of grudges.</p>
+          <h2>Adjust points.</h2>
+          <p>Choose one trader and apply a positive or negative whole-number adjustment.</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
-      <div class="modal-body">
-        <div class="admin-list">
-          ${sortedProfiles.map((profile) => `
-            <div class="admin-user-row">
-              <div>
-                <strong>${escapeHtml(profile.display_name)}</strong>
-                <div class="muted mono" style="font-size:.66rem">${formatNumber(profile.balance)} pts</div>
-              </div>
-              <input type="number" min="-1000000" max="1000000" step="1" value="250" aria-label="Point adjustment for ${escapeAttribute(profile.display_name)}" data-admin-amount="${profile.id}" />
-              <button class="button button-secondary button-small" data-award-user="${profile.id}" type="button">Apply</button>
+      <form id="admin-points-form">
+        <div class="modal-body">
+          <div class="prediction-fields">
+            <div class="form-field">
+              <label for="admin-points-user">Trader</label>
+              <select id="admin-points-user" name="userId" required>
+                <option value="" selected>Choose a trader…</option>
+                ${sortedProfiles.map((profile) => `
+                  <option value="${profile.id}">${escapeHtml(profile.display_name)}</option>
+                `).join("")}
+              </select>
             </div>
-          `).join("")}
+            <div class="form-field">
+              <label for="admin-points-amount">Adjustment</label>
+              <input
+                id="admin-points-amount"
+                name="amount"
+                type="number"
+                min="-1000000"
+                max="1000000"
+                step="1"
+                placeholder="For example, 250 or -100"
+                required
+              />
+              <small>Positive adds points. Negative removes them.</small>
+            </div>
+          </div>
+
+          <div class="trade-summary admin-points-summary">
+            <div class="trade-summary-row">
+              <span>Current balance</span>
+              <strong id="admin-current-balance">—</strong>
+            </div>
+            <div class="trade-summary-row">
+              <span>Balance after adjustment</span>
+              <strong id="admin-new-balance">—</strong>
+            </div>
+          </div>
+          <p class="trade-warning">Adjustments are recorded in the point transaction ledger.</p>
         </div>
-      </div>
-    `);
+        <div class="modal-footer">
+          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+          <button class="button button-primary" type="submit" disabled>Apply adjustment</button>
+        </div>
+      </form>
+    `, "admin-points-modal");
 
-    document.querySelectorAll("[data-award-user]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const userId = button.dataset.awardUser;
-        const input = document.querySelector(`[data-admin-amount="${userId}"]`);
-        const amount = parseWholeNumber(input.value);
-        const profile = state.profiles.find((item) => item.id === userId);
+    const form = document.querySelector("#admin-points-form");
+    const userSelect = document.querySelector("#admin-points-user");
+    const amountInput = document.querySelector("#admin-points-amount");
+    const currentBalance = document.querySelector("#admin-current-balance");
+    const newBalance = document.querySelector("#admin-new-balance");
+    const submit = form.querySelector("button[type='submit']");
 
-        if (amount === null || amount === 0) {
-          showToast("Enter a non-zero whole-number adjustment.", "error");
-          return;
-        }
+    const updateAdjustmentPreview = () => {
+      const profile = state.profiles.find((item) => item.id === userSelect.value);
+      const amount = parseWholeNumber(amountInput.value);
+      const newBalanceValue = profile && amount !== null
+        ? profile.balance + amount
+        : null;
+      const isValid =
+        Boolean(profile) &&
+        amount !== null &&
+        amount !== 0 &&
+        amount >= -1000000 &&
+        amount <= 1000000 &&
+        newBalanceValue >= 0;
 
-        setButtonLoading(button, true, "Applying…");
-        const { error } = await state.client.rpc("award_points", {
-          p_user_id: userId,
-          p_amount: amount,
-          p_note: "Manual admin adjustment",
-        });
-        setButtonLoading(button, false);
+      currentBalance.textContent = profile
+        ? `${formatNumber(profile.balance)} pts`
+        : "—";
+      newBalance.textContent = isValid
+        ? `${formatNumber(newBalanceValue)} pts`
+        : "—";
+      submit.disabled = !isValid;
+    };
 
-        if (error) {
-          showToast(error.message, "error");
-          return;
-        }
+    userSelect.addEventListener("change", updateAdjustmentPreview);
+    amountInput.addEventListener("input", updateAdjustmentPreview);
+    updateAdjustmentPreview();
+    userSelect.focus();
 
-        closeModal();
-        await refreshData({ quiet: true });
-        showToast(`${amount > 0 ? "+" : ""}${formatNumber(amount)} points applied to ${profile?.display_name || "the account"}.`, "success");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const userId = userSelect.value;
+      const amount = parseWholeNumber(amountInput.value);
+      const profile = state.profiles.find((item) => item.id === userId);
+      const newBalanceValue = profile && amount !== null
+        ? profile.balance + amount
+        : -1;
+
+      if (
+        !profile ||
+        amount === null ||
+        amount === 0 ||
+        amount < -1000000 ||
+        amount > 1000000 ||
+        newBalanceValue < 0
+      ) {
+        showToast("Choose a trader and enter a valid non-zero adjustment.", "error");
+        return;
+      }
+
+      setButtonLoading(submit, true, "Applying…");
+      const { error } = await state.client.rpc("award_points", {
+        p_user_id: userId,
+        p_amount: amount,
+        p_note: "Manual admin adjustment",
       });
+      setButtonLoading(submit, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      await refreshData({ quiet: true });
+      showToast(`${amount > 0 ? "+" : ""}${formatNumber(amount)} points applied to ${profile.display_name}.`, "success");
     });
   }
 
-  function openModal(content) {
+  function openModal(content, modalClass = "") {
     dom.modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation">
-        <section class="modal" role="dialog" aria-modal="true">
+        <section class="modal${modalClass ? ` ${escapeAttribute(modalClass)}` : ""}" role="dialog" aria-modal="true">
           ${content}
         </section>
       </div>

@@ -33,7 +33,8 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Proportional pari-mutuel payouts from the full real-point pool
 - Automatic refunds when nobody selected the winning outcome
 - Creator-controlled resolution after the closing time
-- Administrator controls for invitations, early resolution, voiding, and point adjustments
+- Administration page for invitations and point adjustments
+- Administrator market controls for early resolution and voiding
 - Activity feed, leaderboard, completed markets, and status-filtered personal
   prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
@@ -394,8 +395,8 @@ node --test tests/phase1.test.js
 
 The tests are local and do not connect to Supabase.
 
-As of July 27, 2026, all 16 focused tests pass. Measured `app.js` line
-coverage is 43.43%, so these checks are regression protection rather than a
+As of July 27, 2026, all 17 focused tests pass. Measured `app.js` line
+coverage is 47.45%, so these checks are regression protection rather than a
 complete integration suite. The SQL checks verify that critical definitions are
 present; they do not execute PostgreSQL or prove live RLS behavior.
 
@@ -447,6 +448,8 @@ This is intentionally a small friends-only first version.
   production.
 - The first scheduled monthly allowance run has not occurred yet.
 - Modals do not currently trap keyboard focus or restore focus when closed.
+- The compact Adjust points sheet and dynamic-viewport fix should be
+  rechecked on physical iPhone Safari after deployment.
 - The Supabase browser library is pinned only to major version 2, and external
   CDN assets do not currently use Subresource Integrity or a Content Security
   Policy.
