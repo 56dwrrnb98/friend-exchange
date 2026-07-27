@@ -2332,17 +2332,11 @@
           </p>
         </div>
         <div class="modal-footer">
-          ${state.profile.is_admin ? '<button class="button button-secondary" id="account-admin" type="button">Administration</button>' : ""}
           <button class="button button-ghost" id="account-sign-out" type="button">Sign out</button>
           <button class="button button-primary" type="submit">Save name</button>
         </div>
       </form>
     `);
-
-    document.querySelector("#account-admin")?.addEventListener("click", () => {
-      closeModal();
-      window.location.hash = "#/admin";
-    });
 
     document.querySelector("#account-sign-out").addEventListener("click", async (event) => {
       const button = event.currentTarget;

@@ -34,6 +34,8 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Automatic refunds when nobody selected the winning outcome
 - Creator-controlled resolution after the closing time
 - Administration page for invitations and point adjustments
+- Dedicated desktop and mobile Admin navigation; the account modal contains
+  account actions only
 - Administrator market controls for early resolution and voiding
 - Activity feed, leaderboard, completed markets, and status-filtered personal
   prediction history
@@ -395,8 +397,8 @@ node --test tests/phase1.test.js
 
 The tests are local and do not connect to Supabase.
 
-As of July 27, 2026, all 17 focused tests pass. Measured `app.js` line
-coverage is 47.45%, so these checks are regression protection rather than a
+As of July 27, 2026, all 18 focused tests pass. Measured `app.js` line
+coverage is 49.17%, so these checks are regression protection rather than a
 complete integration suite. The SQL checks verify that critical definitions are
 present; they do not execute PostgreSQL or prove live RLS behavior.
 
