@@ -43,6 +43,8 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Reversible administrator archiving for refund-bearing voids, with preserved
   access for administrators and participating traders
 - Separate Resolved, Voided, and Archived market filters
+- Homepage hero showing open markets, unresolved points in play, participating
+  traders, and the signed-in trader’s live positions
 - Activity feed, leaderboard, completed markets, and status-filtered personal
   prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
@@ -411,7 +413,7 @@ node --test tests/phase1.test.js
 
 The tests are local and do not connect to Supabase.
 
-As of July 28, 2026, all 22 focused tests pass. These checks are regression
+As of July 28, 2026, all 23 focused tests pass. These checks are regression
 protection rather than a complete integration suite. The SQL checks verify that
 critical definitions are present; they do not execute PostgreSQL or prove live
 RLS behavior.

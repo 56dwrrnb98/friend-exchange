@@ -764,10 +764,18 @@
       );
     });
     const activeMarkets = markets.filter((market) => ["open", "closed"].includes(market.displayStatus));
+    const openMarkets = markets.filter((market) => market.displayStatus === "open");
     const resolvedMarkets = markets.filter((market) => market.displayStatus === "resolved");
     const voidedMarkets = markets.filter((market) => market.displayStatus === "void");
     const totalAtStake = activeMarkets.reduce((sum, market) => sum + market.actualTotal, 0);
-    const totalPredictions = state.predictions.length;
+    const participatingTraders = new Set(
+      activeMarkets.flatMap((market) =>
+        market.predictions.map((prediction) => prediction.user_id)
+      )
+    ).size;
+    const userLivePositions = activeMarkets.filter((market) =>
+      market.predictions.some((prediction) => prediction.user_id === state.user.id)
+    ).length;
 
     let filtered = markets;
     if (state.marketFilter === "active") filtered = activeMarkets;
@@ -791,20 +799,20 @@
         </div>
         <div class="hero-stats">
           <div class="hero-stat">
-            <span>Active markets</span>
-            <strong>${formatNumber(activeMarkets.length)}</strong>
+            <span>Open markets</span>
+            <strong>${formatNumber(openMarkets.length)}</strong>
           </div>
           <div class="hero-stat">
             <span>Points in play</span>
             <strong>${formatCompact(totalAtStake)}</strong>
           </div>
           <div class="hero-stat">
-            <span>Predictions placed</span>
-            <strong>${formatNumber(totalPredictions)}</strong>
+            <span>Traders participating</span>
+            <strong>${formatNumber(participatingTraders)}</strong>
           </div>
           <div class="hero-stat">
-            <span>Your balance</span>
-            <strong>${formatCompact(state.profile.balance)}</strong>
+            <span>Your live positions</span>
+            <strong>${formatNumber(userLivePositions)}</strong>
           </div>
         </div>
       </section>
@@ -933,6 +941,8 @@
     const canRestore = state.profile.is_admin && market.status === "void" && Boolean(market.archived_at);
     const canPredict = market.displayStatus === "open";
     const canResolve = canManage && market.status === "open" && (market.isPastClose || state.profile.is_admin);
+    const canVoid = canManage && market.status === "open";
+    const hasMarketControls = canEdit || canResolve || canVoid || canArchive || canRestore || canDelete;
     const userPredictions = market.predictions.filter((prediction) => prediction.user_id === state.user.id);
     const userCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortedOutcomes = [...market.outcomes].sort((a, b) => b.percent - a.percent);
@@ -1025,13 +1035,20 @@
 
             <div class="sidebar-actions">
               ${canPredict ? '<button class="button button-primary" id="predict-outcome" type="button">Place a prediction</button>' : ""}
-              ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
-              ${canResolve ? '<button class="button button-mint" id="resolve-market" type="button">Resolve market</button>' : ""}
-              ${canManage && market.status === "open" ? '<button class="button button-danger" id="void-market" type="button">Void and refund</button>' : ""}
-              ${canArchive ? '<button class="button button-secondary" id="archive-void-market" type="button">Archive voided market</button>' : ""}
-              ${canRestore ? '<button class="button button-secondary" id="restore-void-market" type="button">Restore to Voided list</button>' : ""}
-              ${canDelete ? '<button class="button button-danger" id="delete-void-market" type="button">Delete empty voided market</button>' : ""}
-              <a class="button button-secondary" href="#/markets">Back to markets</a>
+              ${hasMarketControls ? `
+                <div class="sidebar-management">
+                  <p class="sidebar-actions-label">Market controls</p>
+                  <div class="sidebar-management-grid">
+                    ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
+                    ${canResolve ? '<button class="button button-secondary" id="resolve-market" type="button">Resolve market</button>' : ""}
+                    ${canArchive ? '<button class="button button-secondary button-wide" id="archive-void-market" type="button">Archive voided market</button>' : ""}
+                    ${canRestore ? '<button class="button button-secondary button-wide" id="restore-void-market" type="button">Restore to Voided list</button>' : ""}
+                    ${canVoid ? '<button class="button button-danger button-danger-subtle button-wide" id="void-market" type="button">Void and refund</button>' : ""}
+                    ${canDelete ? '<button class="button button-danger button-danger-subtle button-wide" id="delete-void-market" type="button">Delete empty voided market</button>' : ""}
+                  </div>
+                </div>
+              ` : ""}
+              <a class="sidebar-back-link" href="#/markets">← Back to markets</a>
             </div>
           </section>
 
