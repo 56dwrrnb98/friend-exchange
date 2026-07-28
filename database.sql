@@ -397,6 +397,74 @@ begin
 end;
 $$;
 
+create or replace function public.edit_market(
+  p_market_id bigint,
+  p_question text,
+  p_description text,
+  p_closes_at timestamptz
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_is_admin boolean := false;
+  v_market public.markets%rowtype;
+  v_question text := btrim(coalesce(p_question, ''));
+  v_description text := nullif(btrim(coalesce(p_description, '')), '');
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select coalesce(is_admin, false)
+  into v_is_admin
+  from public.profiles
+  where id = v_user_id;
+
+  if not v_is_admin then
+    raise exception 'Only an administrator can edit a market.';
+  end if;
+
+  if char_length(v_question) < 5 or char_length(v_question) > 180 then
+    raise exception 'Questions must be between 5 and 180 characters.';
+  end if;
+
+  if v_description is not null and char_length(v_description) > 600 then
+    raise exception 'Details cannot exceed 600 characters.';
+  end if;
+
+  if p_closes_at is null or p_closes_at <= now() then
+    raise exception 'The corrected closing time must be in the future.';
+  end if;
+
+  select *
+  into v_market
+  from public.markets
+  where id = p_market_id
+  for update;
+
+  if not found then
+    raise exception 'Market not found.';
+  end if;
+
+  if v_market.status <> 'open' then
+    raise exception 'Only open markets can be edited.';
+  end if;
+
+  update public.markets
+  set
+    question = v_question,
+    description = v_description,
+    closes_at = p_closes_at
+  where id = p_market_id;
+
+  return p_market_id;
+end;
+$$;
+
 create or replace function public.place_prediction(
   p_market_id bigint,
   p_outcome_id bigint,
@@ -819,6 +887,61 @@ begin
 end;
 $$;
 
+create or replace function public.delete_empty_void_market(
+  p_market_id bigint
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_is_admin boolean := false;
+  v_market public.markets%rowtype;
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select coalesce(is_admin, false)
+  into v_is_admin
+  from public.profiles
+  where id = v_user_id;
+
+  if not v_is_admin then
+    raise exception 'Only an administrator can delete an empty voided market.';
+  end if;
+
+  select *
+  into v_market
+  from public.markets
+  where id = p_market_id
+  for update;
+
+  if not found then
+    raise exception 'Market not found.';
+  end if;
+
+  if v_market.status <> 'void' then
+    raise exception 'Only a voided market can be deleted.';
+  end if;
+
+  if exists (
+    select 1
+    from public.predictions
+    where market_id = p_market_id
+  ) then
+    raise exception 'This market has prediction history and cannot be deleted.';
+  end if;
+
+  delete from public.markets
+  where id = p_market_id;
+
+  return p_market_id;
+end;
+$$;
+
 create or replace function public.award_points(
   p_user_id uuid,
   p_amount bigint,
@@ -1224,9 +1347,11 @@ using (
 -- Function execution permissions.
 revoke all on function public.update_display_name(text) from public, anon;
 revoke all on function public.create_market(text, text, timestamptz, text[]) from public, anon;
+revoke all on function public.edit_market(bigint, text, text, timestamptz) from public, anon;
 revoke all on function public.place_prediction(bigint, bigint, bigint) from public, anon;
 revoke all on function public.resolve_market(bigint, bigint) from public, anon;
 revoke all on function public.void_market(bigint) from public, anon;
+revoke all on function public.delete_empty_void_market(bigint) from public, anon;
 revoke all on function public.award_points(uuid, bigint, text) from public, anon;
 revoke all on function public.hook_require_approved_email(jsonb)
   from public, anon, authenticated;
@@ -1240,9 +1365,11 @@ revoke all on function public.grant_monthly_allowance(date) from public, anon, a
 
 grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.create_market(text, text, timestamptz, text[]) to authenticated;
+grant execute on function public.edit_market(bigint, text, text, timestamptz) to authenticated;
 grant execute on function public.place_prediction(bigint, bigint, bigint) to authenticated;
 grant execute on function public.resolve_market(bigint, bigint) to authenticated;
 grant execute on function public.void_market(bigint) to authenticated;
+grant execute on function public.delete_empty_void_market(bigint) to authenticated;
 grant execute on function public.award_points(uuid, bigint, text) to authenticated;
 grant execute on function public.hook_require_approved_email(jsonb)
   to supabase_auth_admin;
@@ -1314,6 +1441,7 @@ $$;
 -- where profile.id = auth_user.id
 --   and lower(auth_user.email) = lower('you@example.com');
 --
--- The admin can resolve any market early, void any open market, and
--- award or deduct points from the leaderboard/account screen.
+-- The admin can correct any open market, resolve any market early,
+-- void any open market, delete an empty voided market, and award or
+-- deduct points from the leaderboard/account screen.
 -- ================================================================

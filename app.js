@@ -755,13 +755,15 @@
   function renderMarkets() {
     const markets = getAllMarkets();
     const activeMarkets = markets.filter((market) => ["open", "closed"].includes(market.displayStatus));
-    const resolvedMarkets = markets.filter((market) => ["resolved", "void"].includes(market.displayStatus));
+    const resolvedMarkets = markets.filter((market) => market.displayStatus === "resolved");
+    const voidedMarkets = markets.filter((market) => market.displayStatus === "void");
     const totalAtStake = activeMarkets.reduce((sum, market) => sum + market.actualTotal, 0);
     const totalPredictions = state.predictions.length;
 
     let filtered = markets;
     if (state.marketFilter === "active") filtered = activeMarkets;
     if (state.marketFilter === "resolved") filtered = resolvedMarkets;
+    if (state.marketFilter === "void") filtered = voidedMarkets;
 
     dom.main.innerHTML = `
       <section class="hero">
@@ -807,6 +809,7 @@
       <div class="filter-row" role="group" aria-label="Filter markets">
         ${filterButton("active", "Active", activeMarkets.length)}
         ${filterButton("resolved", "Resolved", resolvedMarkets.length)}
+        ${filterButton("void", "Voided", voidedMarkets.length)}
         ${filterButton("all", "All", markets.length)}
       </div>
 
@@ -839,11 +842,12 @@
 
   function renderNoMarkets(filter) {
     const isActive = filter === "active";
+    const isVoided = filter === "void";
     return `
       <div class="empty-state" style="grid-column:1/-1">
-        <div class="empty-state-icon">${isActive ? "?" : "✓"}</div>
-        <h2>${isActive ? "No active markets. Society is healing." : "Nothing here yet."}</h2>
-        <p>${isActive ? "Create a question and give your friends something new to be confidently wrong about." : "Resolved markets will appear here after reality provides an answer."}</p>
+        <div class="empty-state-icon">${isActive ? "?" : isVoided ? "∅" : "✓"}</div>
+        <h2>${isActive ? "No active markets. Society is healing." : isVoided ? "No regulatory incidents." : "Nothing here yet."}</h2>
+        <p>${isActive ? "Create a question and give your friends something new to be confidently wrong about." : isVoided ? "Voided markets will remain here when refunds need an audit trail." : "Resolved markets will appear here after reality provides an answer."}</p>
         ${isActive ? '<a class="button button-primary" href="#/create">Create the first market</a>' : ""}
       </div>
     `;
@@ -896,6 +900,8 @@
 
     const isCreator = market.creator_id === state.user.id;
     const canManage = isCreator || state.profile.is_admin;
+    const canEdit = state.profile.is_admin && market.status === "open";
+    const canDelete = state.profile.is_admin && market.status === "void" && market.predictions.length === 0;
     const canPredict = market.displayStatus === "open";
     const canResolve = canManage && market.status === "open" && (market.isPastClose || state.profile.is_admin);
     const userPredictions = market.predictions.filter((prediction) => prediction.user_id === state.user.id);
@@ -989,8 +995,10 @@
 
             <div class="sidebar-actions">
               ${canPredict ? '<button class="button button-primary" id="predict-outcome" type="button">Place a prediction</button>' : ""}
+              ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
               ${canResolve ? '<button class="button button-mint" id="resolve-market" type="button">Resolve market</button>' : ""}
               ${canManage && market.status === "open" ? '<button class="button button-danger" id="void-market" type="button">Void and refund</button>' : ""}
+              ${canDelete ? '<button class="button button-danger" id="delete-void-market" type="button">Delete empty voided market</button>' : ""}
               <a class="button button-secondary" href="#/markets">Back to all markets</a>
             </div>
           </section>
@@ -1014,8 +1022,10 @@
       openPredictionModal(market);
     });
 
+    document.querySelector("#edit-market")?.addEventListener("click", () => openEditMarketModal(market));
     document.querySelector("#resolve-market")?.addEventListener("click", () => openResolveModal(market));
     document.querySelector("#void-market")?.addEventListener("click", () => openVoidModal(market));
+    document.querySelector("#delete-void-market")?.addEventListener("click", () => openDeleteVoidMarketModal(market));
   }
 
   function renderOutcomeCard(outcome, market, canPredict) {
@@ -2225,6 +2235,102 @@
     });
   }
 
+  function openEditMarketModal(market) {
+    if (!state.profile?.is_admin || market.status !== "open") return;
+
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Administrator correction</p>
+          <h2>Edit market.</h2>
+          <p>Outcomes and prediction history remain unchanged.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <form id="edit-market-form">
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-field form-field-full">
+              <label for="edit-market-question">Question</label>
+              <input
+                id="edit-market-question"
+                name="question"
+                type="text"
+                minlength="5"
+                maxlength="180"
+                value="${escapeAttribute(market.question)}"
+                required
+              />
+            </div>
+            <div class="form-field form-field-full">
+              <label for="edit-market-description">Details <span class="muted">(optional)</span></label>
+              <textarea
+                id="edit-market-description"
+                name="description"
+                maxlength="600"
+              >${escapeHtml(market.description || "")}</textarea>
+            </div>
+            <div class="form-field form-field-full">
+              <label for="edit-market-closes">Predictions close</label>
+              <input
+                id="edit-market-closes"
+                name="closesAt"
+                type="datetime-local"
+                value="${toLocalDateTimeInput(new Date(market.closes_at))}"
+                required
+              />
+              <small>The corrected closing time must still be in the future.</small>
+            </div>
+          </div>
+          <p class="trade-warning">
+            This is an admin-only correction. Existing predictions are final, so outcome names cannot be edited.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+          <button class="button button-primary" type="submit">Save correction</button>
+        </div>
+      </form>
+    `, "edit-market-modal");
+
+    document.querySelector("#edit-market-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const question = String(form.get("question") || "").trim();
+      const description = String(form.get("description") || "").trim();
+      const closesAt = new Date(String(form.get("closesAt") || ""));
+      const button = event.currentTarget.querySelector("button[type='submit']");
+
+      if (question.length < 5 || question.length > 180) {
+        showToast("Questions must be between 5 and 180 characters.", "error");
+        return;
+      }
+
+      if (Number.isNaN(closesAt.getTime()) || closesAt.getTime() <= Date.now()) {
+        showToast("Choose a corrected closing time in the future.", "error");
+        return;
+      }
+
+      setButtonLoading(button, true, "Saving correction…");
+      const { error } = await state.client.rpc("edit_market", {
+        p_market_id: market.id,
+        p_question: question,
+        p_description: description || null,
+        p_closes_at: closesAt.toISOString(),
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      await refreshData({ quiet: true });
+      showToast("Market corrected. The official record has been amended.", "success");
+    });
+  }
+
   function openVoidModal(market) {
     openModal(`
       <div class="modal-header">
@@ -2261,6 +2367,53 @@
       closeModal();
       await refreshData({ quiet: true });
       showToast("Market voided. All imaginary capital has returned home.", "success");
+    });
+  }
+
+  function openDeleteVoidMarketModal(market) {
+    if (!state.profile?.is_admin || market.status !== "void" || market.predictions.length !== 0) return;
+
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Administrative cleanup</p>
+          <h2>Delete this empty voided market?</h2>
+          <p>${escapeHtml(market.question)}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0">
+          Because no predictions were ever placed, this market has no financial history to preserve.
+          Deleting it will permanently remove the market and its outcomes.
+        </p>
+        <p class="trade-warning">
+          Voided markets with predictions cannot be deleted; their refund history remains auditable.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Keep record</button>
+        <button class="button button-danger" id="confirm-delete-void" type="button">Delete permanently</button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-delete-void").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Deleting…");
+      const { error } = await state.client.rpc("delete_empty_void_market", {
+        p_market_id: market.id,
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      await refreshData({ quiet: true });
+      window.location.hash = "#/markets";
+      showToast("The empty voided market has been removed.", "success");
     });
   }
 

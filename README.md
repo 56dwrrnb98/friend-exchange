@@ -2,7 +2,7 @@
 
 *A fictional-points prediction exchange for questions that matter only to your friends.*
 
-Last verified against the canonical workspace: **July 27, 2026**
+Last verified against the canonical workspace: **July 28, 2026**
 
 This is the current static application built with:
 
@@ -37,6 +37,10 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Dedicated desktop and mobile Admin navigation; the account modal contains
   account actions only
 - Administrator market controls for early resolution and voiding
+- Administrator-only corrections to an open market's question, details, and
+  closing time; outcome names remain immutable
+- Administrator cleanup of empty voided markets with no prediction history
+- Separate Resolved and Voided market filters
 - Activity feed, leaderboard, completed markets, and status-filtered personal
   prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
@@ -129,6 +133,8 @@ already been applied:
 2. `migrations/20260727_email_allowlist.sql` adds the approved-email registry,
    grandfathers existing accounts, and creates the secure signup hook and
    administrator functions.
+3. `migrations/20260728_admin_market_corrections.sql` adds administrator-only
+   market corrections and safe deletion of empty voided markets.
 
 The email-allowlist migration does not enable the Auth hook automatically.
 Complete the authentication steps below after publishing the matching front-end
@@ -363,7 +369,8 @@ friend-exchange/
 ├── database.sql     Tables, security, points, predictions, and payouts
 ├── migrations/
 │   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
-│   └── 20260727_email_allowlist.sql Existing-database allowlist migration
+│   ├── 20260727_email_allowlist.sql Existing-database allowlist migration
+│   └── 20260728_admin_market_corrections.sql Existing-database market-correction migration
 ├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
@@ -397,10 +404,10 @@ node --test tests/phase1.test.js
 
 The tests are local and do not connect to Supabase.
 
-As of July 27, 2026, all 18 focused tests pass. Measured `app.js` line
-coverage is 49.17%, so these checks are regression protection rather than a
-complete integration suite. The SQL checks verify that critical definitions are
-present; they do not execute PostgreSQL or prove live RLS behavior.
+As of July 28, 2026, all 20 focused tests pass. These checks are regression
+protection rather than a complete integration suite. The SQL checks verify that
+critical definitions are present; they do not execute PostgreSQL or prove live
+RLS behavior.
 
 # How authentication works
 
