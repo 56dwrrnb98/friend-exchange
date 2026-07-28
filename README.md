@@ -2,91 +2,42 @@
 
 *A fictional-points prediction exchange for questions that matter only to your friends.*
 
-Last verified against the canonical workspace: **July 28, 2026**
+The Friend Exchange is a small, self-hosted prediction market for private
+groups. Members commit fictional points to possible outcomes, community odds
+respond to those predictions, and the point pool is distributed when a market
+is resolved.
 
-This is the current static application built with:
+The application uses:
 
 - Plain HTML, CSS, and JavaScript
 - Supabase for the database and email/password accounts
-- GitHub Pages (or any static host) for publishing
+- GitHub Pages or any other static web host
 
 There is no build step, package manager, framework, or custom server.
 
-For the authoritative product rules, brand voice, visual system, architecture,
-production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
+## Features
 
-## What is included
-
-- Required display name, email, and password registration
-- Registration restricted to administrator-approved email addresses
-- Email confirmation before first sign-in
-- Normal email/password login from multiple devices
-- Password-reset emails and an in-app new-password screen
-- 1,000 starting points per person
-- 100-point monthly allowance for anyone signed in within the preceding 90 days
-- Markets with 2–10 outcomes
-- Yes/No questions are simply two-outcome markets
-- Public community odds that respond to point totals
-- 25 display-only seed points per outcome to soften early odds
-- Multiple predictions per person, including on different outcomes
-- No withdrawing or moving committed points
-- Proportional pari-mutuel payouts from the full real-point pool
+- Administrator-approved registration with email confirmation
+- Password recovery and persistent accounts across devices
+- 1,000 starting points for each member
+- A monthly allowance for recently active members
+- Markets with 2–10 outcomes, including simple Yes/No questions
+- Community odds based on the points committed to each outcome
+- Multiple predictions per member and market
+- Proportional pari-mutuel payouts
 - Automatic refunds when nobody selected the winning outcome
-- Creator-controlled resolution after the closing time
-- Required resolution notes that permanently explain the selected winner
-- Administration page for invitations and point adjustments
-- Dedicated desktop and mobile Admin navigation; the account modal contains
-  account actions only
-- A curated profile-icon picker with initials as the default and fallback
-- Administrator market controls for early resolution and voiding
-- Administrator-only corrections to an open market's question, details, and
-  closing time; outcome names remain immutable
-- Administrator cleanup of empty voided markets with no prediction history
-- Reversible administrator archiving for refund-bearing voids, with preserved
-  access for administrators and participating traders
-- Separate Resolved, Voided, and Archived market filters
-- Homepage hero showing open markets, unresolved points in play, participating
-  traders, and the signed-in trader’s live positions
-- Activity feed, leaderboard, completed markets, and status-filtered personal
-  prediction history
-- Sortable leaderboard ranked by realized **Profit / loss** by default
-- Leaderboard highlights for **Current robber baron**, the all-time **Largest wager**,
-  and **Points wagered** during the rolling last 30 days
-- Current balance, points currently committed, all-time committed, and
-  **Profit / loss** on personal portfolios
-- Portfolio filters for **All**, **Active**, **Won**, **Lost**, and **Refunded**
-- **Profit / loss** on the leaderboard
+- Creator-controlled resolution after closing
+- Permanent resolution notes
+- Administrator controls for invitations, point adjustments, early resolution,
+  voiding, corrections, and archiving
+- Activity, leaderboard, market history, and personal portfolio views
 - Optional real-time updates across open browsers
-- Responsive desktop and mobile design
+- Responsive desktop and mobile layouts
 
-## Current production status
+## How odds and payouts work
 
-Confirmed in production:
-
-- GitHub Pages hosting
-- Registration restricted to approved email addresses
-- Email confirmation before first sign-in
-- Password reset
-- Desktop date/time-field rendering
-- Physical iPhone Safari date/time-field rendering
-
-Configured but not yet exercised on a first-of-month run:
-
-- The monthly active-trader allowance cron
-
-Not yet verified:
-
-- Real-time automatic refresh across multiple simultaneously open browsers
-
-“Real-time” means that an open browser should refresh its displayed data after
-another trader creates a market, commits points, resolves or voids a market, or
-changes another published record. The subscription and database publication
-configuration are present, but this behavior has not yet been confirmed in
-production.
-
-## Important model note
-
-The displayed percentages are **community odds**, not true contract prices. They are calculated as:
+Displayed percentages are **community odds**, not contract prices. They are
+calculated as:
 
 ```text
 (outcome's real points + 25 seed points)
@@ -94,11 +45,12 @@ The displayed percentages are **community odds**, not true contract prices. They
 (all real points + all seed points)
 ```
 
-The 25-point seed is only used for the display. It is never included in payouts.
+The 25-point seed softens early odds and is used only for display. It is never
+included in payouts.
 
-When a market resolves, the full pool of actual committed points is divided among people who selected the winning outcome. Each winner receives the same proportion of the total pool as their proportion of the winning side.
-
-Example:
+When a market resolves, the complete pool of committed points is divided among
+members who selected the winning outcome. Each winner receives the same
+proportion of the pool as their proportion of the winning side.
 
 ```text
 Total pool: 1,000 points
@@ -109,143 +61,114 @@ Your payout:
 100 ÷ 300 × 1,000 = 333 points
 ```
 
-Integer rounding leftovers are distributed automatically so the entire pool is paid out exactly.
+Integer-rounding leftovers are distributed automatically so the entire pool is
+paid out exactly.
 
 ---
 
 # Setup
 
-## 1. Create a Supabase project
+## Requirements
 
-1. Create a new Supabase project.
-2. Wait for the project to finish provisioning.
-3. Open **SQL Editor**.
-4. Create a new query.
-5. Copy the entire contents of `database.sql` into the editor.
-6. Click **Run**.
+To run your own copy, you will need:
 
-The SQL creates all tables, indexes, security policies, profile automation,
-payout logic, database functions, and the monthly allowance schedule.
+- A Supabase project
+- A static web host such as GitHub Pages
+- An SMTP provider for normal signup-confirmation and password-reset delivery
+- A local web server for development
 
-For a new Supabase project, run the complete file once.
+## 1. Create the database
 
-For an existing live project, do **not** rerun `database.sql`. Back up the
-database, inspect the live schema, and run only the migrations that have not
-already been applied:
+1. Create a Supabase project and wait for it to finish provisioning.
+2. Open **SQL Editor**.
+3. Create a new query.
+4. Copy the complete contents of `database.sql` into the editor.
+5. Click **Run**.
 
-1. `migrations/20260724_monthly_allowance.sql` adds the retry-safe allowance
-   ledger and schedules the award for 06:05 UTC on the first of each month,
-   which is 00:05 CST or 01:05 CDT.
-2. `migrations/20260727_email_allowlist.sql` adds the approved-email registry,
-   grandfathers existing accounts, and creates the secure signup hook and
-   administrator functions.
-3. `migrations/20260728_admin_market_corrections.sql` adds administrator-only
-   market corrections and safe deletion of empty voided markets.
-4. `migrations/20260728_void_market_archiving.sql` adds reversible archiving
-   for refund-bearing voided markets.
-5. `migrations/20260728_resolution_notes.sql` adds required settlement context
-   and resolver attribution to future market resolutions.
-6. `migrations/20260728_profile_icons.sql` adds the curated profile-icon field
-   and the protected profile-saving function.
+The SQL file creates the tables, indexes, security policies, profile automation,
+payout logic, database functions, monthly allowance schedule, and real-time
+publication configuration. Run the complete file once on a new Supabase
+project.
 
-The email-allowlist migration does not enable the Auth hook automatically.
-Complete the authentication steps below after publishing the matching front-end
-files.
-
-## 2. Configure email/password authentication
+## 2. Configure email authentication
 
 In the Supabase dashboard:
 
 1. Open **Authentication**.
 2. Open **Providers** or **Sign In / Providers**.
 3. Open the **Email** provider.
-4. Make sure email/password sign-in is enabled.
+4. Enable email/password sign-in.
 5. Turn **Confirm email** on.
 6. Save the provider settings.
 
-Leave **Anonymous Sign-Ins** disabled. This version does not use anonymous accounts.
+Leave **Anonymous Sign-Ins** disabled. The application does not use anonymous
+accounts.
 
-New users must follow the confirmation link before they can enter the exchange.
-Existing accounts remain active.
-
-### Configure outbound authentication email
+### Configure outbound email
 
 Configure a custom SMTP provider under **Authentication → Email → SMTP
-Settings** before enabling confirmation. Supabase's built-in mailer is intended
-only for testing, has a low rate limit, and ordinarily sends only to addresses
-belonging to members of the Supabase project team. A custom SMTP provider is
-therefore required for normal friend addresses. Test both a password-reset
-message and a signup-confirmation message.
+Settings** before inviting members. Supabase's built-in mailer is intended for
+testing and is not suitable for normal delivery to a group of users.
 
-Reference: [Supabase custom SMTP documentation](https://supabase.com/docs/guides/auth/auth-smtp).
+Test both a signup-confirmation message and a password-reset message after
+configuration.
 
-One option is [Resend](https://resend.com):
+See the [Supabase custom SMTP
+documentation](https://supabase.com/docs/guides/auth/auth-smtp) for provider
+requirements. [Resend](https://resend.com) is one available SMTP provider, but
+the application does not depend on a particular service.
 
-1. Create a Resend account and add a domain you control.
-2. Add the DNS records supplied by Resend, then wait for SPF and DKIM to show as
-   verified. Configure DMARC as recommended by your email provider.
-3. Create a Resend API key for SMTP and keep it private.
-4. In Supabase, open **Authentication → Email → SMTP Settings** and enter:
-   - **Host:** `smtp.resend.com`
-   - **Port:** `465` or `587`
-   - **Username:** `resend`
-   - **Password:** the Resend API key
-   - **Sender email:** an address on the verified domain, such as
-     `friendexchange@yourdomain.com`
-   - **Sender name:** a recognizable name for the exchange
-5. Save the SMTP settings and send both a password-reset email and a new-account
-   confirmation email to verify delivery.
+## 3. Approve the first administrator email
 
-### Enable the approved-email hook
+Registration is restricted to email addresses recorded in the invitation
+registry. Before enabling the registration hook, add the email address you will
+use for the first administrator account:
 
-After running the migration:
+```sql
+insert into public.approved_signup_emails (email)
+values (lower('you@example.com'));
+```
 
-1. On a brand-new project with no accounts, add the first administrator email
-   before enabling the hook:
+Then:
 
-   ```sql
-   insert into public.approved_signup_emails (email)
-   values (lower('you@example.com'));
-   ```
-
-   Existing-project migrations already grandfather all current accounts.
-2. Open **Authentication → Hooks**.
-3. Find **Before User Created**.
-4. Choose the Postgres function
+1. Open **Authentication → Hooks**.
+2. Find **Before User Created**.
+3. Choose the Postgres function
    `public.hook_require_approved_email`.
-5. Enable and save the hook.
+4. Enable and save the hook.
 
 The hook rejects unapproved addresses before an Auth user or public profile is
-created. Do not substitute a browser-only email check; the database hook is the
+created. The database hook—not a browser-only check—is the registration
 security boundary.
 
-Reference: [Supabase Before User Created hook documentation](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook).
+See the [Supabase Before User Created hook
+documentation](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook)
+for additional details.
 
-## 3. Configure the site and password-reset URLs
-
-Password-reset emails must be allowed to redirect back to your app.
+## 4. Configure application URLs
 
 In Supabase:
 
 1. Open **Authentication → URL Configuration**.
-2. Set **Site URL** to your published site URL once you have one.
-3. Under **Redirect URLs**, add the exact local URL you use while testing.
-4. Also add the exact published GitHub Pages URL after deployment.
+2. Set **Site URL** to your published application URL once you have one.
+3. Add the exact local URL you use for development under **Redirect URLs**.
+4. Add the exact published URL under **Redirect URLs** after deployment.
 
 Examples:
 
 ```text
-http://127.0.0.1:5500/friend-exchange/index.html
+http://localhost:8000/
 https://YOUR-GITHUB-NAME.github.io/friend-exchange/
 ```
 
-Use the actual URL shown in your browser. The app sends password-reset users back to the current page's origin and path.
+Use the actual address shown in your browser. Password-recovery links return to
+the current application's origin and path.
 
-If your local server opens a different address, such as `http://localhost:8000/`, add that address instead. You may keep both local and published URLs in the allowlist.
+See the [Supabase redirect URL
+documentation](https://supabase.com/docs/guides/auth/redirect-urls) for supported
+URL patterns.
 
-Reference: [Supabase redirect URL documentation](https://supabase.com/docs/guides/auth/redirect-urls).
-
-## 4. Add your project information
+## 5. Add your Supabase project information
 
 In Supabase:
 
@@ -254,7 +177,7 @@ In Supabase:
 3. Copy the **Project URL**.
 4. Copy the **Publishable key**.
 
-Copy `config.example.js` to `config.js`, then replace these placeholders:
+Copy `config.example.js` to `config.js`, then replace the placeholders:
 
 ```js
 window.FRIEND_EXCHANGE_CONFIG = {
@@ -266,29 +189,18 @@ window.FRIEND_EXCHANGE_CONFIG = {
 ```
 
 Use the **Publishable key**, not a Secret key or legacy `service_role` key.
+Publishable keys are designed to be visible in browser applications. The
+included Row Level Security policies and database functions protect balances,
+predictions, results, and administrator actions.
 
-The Publishable key is expected to be visible in browser code. The included Row Level Security rules and database functions are what prevent visitors from editing balances, changing results, or bypassing the prediction rules.
+Never place a Secret key or `service_role` key in `config.js`.
 
-Do not paste the live configuration into documentation, support messages, test
-fixtures, or transfer archives. Preserve an existing production `config.js`
-unchanged unless you are intentionally moving the site to a different Supabase
-project.
+## 6. Run the application locally
 
-## 5. Test it locally
+Opening `index.html` directly is not recommended because authentication
+redirects work more reliably through a local web server.
 
-Opening `index.html` directly is not recommended because authentication redirects work more reliably through a local web server.
-
-### Easiest option in VS Code
-
-1. Install the **Live Server** extension.
-2. Open this project folder in VS Code.
-3. Right-click `index.html`.
-4. Choose **Open with Live Server**.
-5. Copy the exact address from the browser and add it to Supabase's **Redirect URLs** as described above.
-
-### Built-in Mac option
-
-Open Terminal, move into this folder, and run:
+One option is Python's built-in server:
 
 ```bash
 python3 -m http.server 8000
@@ -297,19 +209,20 @@ python3 -m http.server 8000
 Then open:
 
 ```text
-http://localhost:8000
+http://localhost:8000/
 ```
 
-Add that URL to the Supabase redirect allowlist before testing password recovery.
+Alternatively, use a local static-server tool such as the VS Code Live Server
+extension. Add the exact local address to Supabase's redirect allowlist before
+testing authentication or password recovery.
 
-## 6. Create your account and make yourself administrator
+## 7. Create the first administrator
 
-1. Open the site.
-2. Choose **Create account**.
-3. Enter your display name, email, and a password of at least eight characters.
-4. Follow the confirmation email and enter the app with 1,000 points.
-5. Return to the Supabase SQL Editor.
-6. Run this query with your real login email:
+1. Open the application and choose **Create account**.
+2. Register with the email address approved earlier.
+3. Follow the confirmation email.
+4. Return to the Supabase SQL Editor.
+5. Run the following query with the same email address:
 
 ```sql
 update public.profiles as profile
@@ -319,175 +232,101 @@ where profile.id = auth_user.id
   and lower(auth_user.email) = lower('you@example.com');
 ```
 
-Refresh the website. You should now see administrator controls.
+Refresh the application. The Administration area should now be available.
+Use it to approve additional member email addresses and manage the exchange.
 
-Using the email address is safer than using a display name because display names do not have to be unique.
+## 8. Publish the site
 
-Open **Administration**, add a test email to the invitation registry, and
-confirm that only that address can register. Existing accounts appear
-automatically as joined records after the allowlist migration.
+The browser requires these files:
 
-## 7. Test password recovery
+- `index.html`
+- `styles.css`
+- `app.js`
+- `config.js`
 
-1. Open your account menu and choose **Sign out**.
-2. Click **Forgot password?** on the login screen.
-3. Enter your account email.
-4. Open the reset email and follow its link.
-5. The site should display the **Choose a new password** screen.
-6. Save a new password.
-7. You should return to the exchange with the same balance, predictions, markets, and account history.
+To publish with GitHub Pages:
 
-If the email link opens the wrong page, check **Authentication → URL Configuration** and make sure the exact current site URL is included under Redirect URLs.
+1. Create a GitHub repository containing the application files.
+2. Commit the files to the `main` branch.
+3. Open the repository's **Settings → Pages**.
+4. Under **Build and deployment**, select **Deploy from a branch**.
+5. Choose the `main` branch and `/ (root)` folder.
+6. Save the settings.
+7. Add the published URL to Supabase's **Site URL** and **Redirect URLs**.
 
-## 8. Publish with GitHub Pages
+See the [GitHub Pages publishing
+documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source)
+for additional hosting instructions.
 
-1. Create a new GitHub repository.
-2. Upload the canonical project folder. The files required by the browser are:
-   - `index.html`
-   - `styles.css`
-   - `app.js`
-   - `config.js`
-3. Keep the following source and operational files in the repository as well:
-   - `config.example.js`
-   - `database.sql`
-   - `migrations/`
-   - `tests/`
-   - `README.md`
-   - `PROJECT_CONTEXT.md`
-4. Commit the files to the `main` branch.
-5. Open the repository's **Settings**.
-6. Select **Pages**.
-7. Under **Build and deployment**, choose **Deploy from a branch**.
-8. Choose the `main` branch and `/ (root)` folder.
-9. Save.
-10. Copy the published URL into Supabase's **Site URL** and **Redirect URLs** settings.
-
-Only addresses in the administrator-managed invitation registry can create an
-account, but the public site URL may still be shared freely.
-
-Reference: [GitHub Pages publishing-source documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
+Only administrator-approved email addresses can register, although the public
+site URL itself can be shared freely.
 
 ---
 
-# Files
+# Project files
 
 ```text
 friend-exchange/
-├── index.html       App structure, login, registration, and reset screens
-├── styles.css       Responsive visual design
-├── app.js           Front-end behavior, authentication, and Supabase calls
-├── config.js        Your Supabase URL, Publishable key, and app name
-├── config.example.js Placeholder-only configuration template
-├── database.sql     Tables, security, points, predictions, and payouts
-├── migrations/
-│   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
-│   ├── 20260727_email_allowlist.sql Existing-database allowlist migration
-│   ├── 20260728_admin_market_corrections.sql Existing-database market-correction migration
-│   ├── 20260728_void_market_archiving.sql Existing-database void-archive migration
-│   ├── 20260728_resolution_notes.sql Existing-database resolution-note migration
-│   └── 20260728_profile_icons.sql Existing-database profile-icon migration
-├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
+├── index.html         Application structure and account screens
+├── styles.css         Responsive visual design
+├── app.js             Front-end behavior and Supabase calls
+├── config.js          Your public Supabase configuration and app name
+├── config.example.js  Placeholder configuration template
+├── database.sql       Complete database setup for a new project
 ├── tests/
-│   └── phase1.test.js Focused front-end and calculation regression tests
-└── README.md        Full setup and usage instructions
+│   └── phase1.test.js Local front-end and calculation checks
+└── README.md          Setup, architecture, and usage instructions
 ```
 
-# Regression checks
+# Development checks
 
-The focused checks:
-
-- Rejects fractional prediction and administrator-adjustment inputs instead of
-  silently rounding them down.
-- Labels no-winner-refund positions as **Refunded**.
-- Preserves the existing payout, balance, and **Profit / loss**
-  calculations.
-- Verifies the sortable leaderboard's default **Profit / loss** ranking,
-  tie-breakers, and realized-performance calculations.
-- Verifies that the allowance remains restricted to recent sign-ins and has
-  one ledger entry per trader and month.
-- Verifies the approved-email hook, admin invitation registry, and
-  confirmation-aware signup interface remain present.
-- Verifies cumulative largest-wager, rolling 30-day activity, tie, and empty-state
-  calculations for the leaderboard highlights.
-- Verifies administrator archive/restore rules and participating-trader access
-  to archived refund history.
-- Verifies required resolution-note input, safe display, and database enforcement.
-
-Run the focused checks with a current Node.js runtime:
+With a current Node.js runtime:
 
 ```bash
 node --check app.js
 node --test tests/phase1.test.js
 ```
 
-The tests are local and do not connect to Supabase.
+These checks run locally and do not connect to Supabase. Database-oriented
+checks confirm that important SQL definitions are present; they do not execute
+PostgreSQL or verify live Row Level Security behavior.
 
-As of July 28, 2026, all 23 focused tests pass. These checks are regression
-protection rather than a complete integration suite. The SQL checks verify that
-critical definitions are present; they do not execute PostgreSQL or prove live
-RLS behavior.
+# Architecture and security
 
-# How authentication works
+Supabase Auth manages account registration, email confirmation, sessions, and
+password recovery. The browser never receives or stores readable passwords.
 
-- Registration calls Supabase email/password sign-up and sends the display name as user metadata.
-- The Before User Created hook rejects addresses that are not in
-  `approved_signup_emails`.
-- The database trigger creates the matching public profile and grants 1,000 starting points.
-- Supabase sends a confirmation link through the configured custom SMTP
-  provider; the account can sign in after following it.
-- Supabase Cron grants 100 points on the first of each month to accounts whose
-  latest sign-in was within the preceding 90 days.
-- Supabase stores the login session in the browser and refreshes it automatically.
-- Logging into another device with the same email and password returns the same Supabase user ID, so the same profile, balance, predictions, and markets are loaded.
-- Password recovery sends an email through Supabase. The link returns to the app, opens the new-password screen, and updates the logged-in user's password.
-- The browser never receives or stores readable passwords. Password handling is managed by Supabase Auth.
+The database creates a public profile for each confirmed member and grants the
+starting balance. A scheduled database job grants the monthly allowance to
+members whose latest sign-in was within the preceding 90 days.
 
-# How the app's database security works
+The browser may read the exchange information needed for markets, activity,
+leaderboards, and portfolios. It cannot directly change balances, insert
+predictions, resolve markets, award points, or read the invitation registry.
+Those actions use protected PostgreSQL functions that validate the signed-in
+member, balance, market status, closing time, ownership, and administrator
+permissions.
 
-The browser is allowed to read public exchange information, including markets, predictions, display names, balances, and payouts.
+Balance-changing functions also use row locks so simultaneous actions cannot
+spend the same points twice.
 
-The browser is **not** allowed to directly:
+# Limitations
 
-- Edit a point balance
-- Insert a prediction row
-- Change a market result
-- Create outcomes outside the validated market-creation process
-- Award itself points
-- Read or edit the approved-email registry
+The Friend Exchange is designed for a small, trusted community.
 
-Instead, the front end calls PostgreSQL functions through Supabase RPC. Those functions check the signed-in user, available balance, market status, closing time, outcome ownership, creator permissions, and administrator permissions inside the database.
-
-The critical balance-changing functions also use row locks, so two simultaneous actions cannot spend the same points twice.
-
-# Current limitations
-
-This is intentionally a small friends-only first version.
-
-- The invitation registry approves addresses but does not send a separate
-  invitation message; the administrator still tells friends when they may
-  register.
-- Confirmation and password recovery depend on the configured custom SMTP
-  provider and correct Supabase redirect URLs.
-- There are no comments, notifications, images, or market categories.
+- The invitation registry approves addresses but does not send invitation
+  messages.
+- Signup confirmation and password recovery depend on correctly configured
+  SMTP and redirect URLs.
 - Display names are not required to be unique.
-- The app loads the full small-community dataset at once. That is simple and appropriate for a friend group, but it would need pagination and more selective queries for a large public community.
-- Real-time cross-browser refresh is configured but has not been verified in
-  production.
-- The first scheduled monthly allowance run has not occurred yet.
+- There are no comments, notifications, images, market categories, or search.
+- The application loads the complete small-community dataset at once. A large
+  public deployment would require pagination and more selective queries.
 - Modals do not currently trap keyboard focus or restore focus when closed.
-- The compact Adjust points sheet and dynamic-viewport fix should be
-  rechecked on physical iPhone Safari after deployment.
-- The Supabase browser library is pinned only to major version 2, and external
-  CDN assets do not currently use Subresource Integrity or a Content Security
-  Policy.
-
-# Sensible next upgrades
-
-1. Add comments and market updates.
-2. Add categories and search.
-3. Add creator avatars or ridiculous profile statistics.
-4. Add an admin resolution log or two-step confirmation for disputed results.
+- External CDN assets do not currently use Subresource Integrity or a Content
+  Security Policy.
 
 # Disclaimer
 
-All points are fictional. They cannot be purchased, transferred for value, redeemed, withdrawn, or exchanged for money, goods, services, or prizes.
+All points are fictional. They cannot be purchased, transferred for value,
+redeemed, withdrawn, or exchanged for money, goods, services, or prizes.
