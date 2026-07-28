@@ -10,7 +10,8 @@ is resolved.
 The application uses:
 
 - Plain HTML, CSS, and JavaScript
-- Supabase for the database and email/password accounts
+- Supabase for the database and authentication
+- An SMTP provider, such as Resend, for authentication emails
 - GitHub Pages or any other static web host
 
 There is no build step, package manager, framework, or custom server.
