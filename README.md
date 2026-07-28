@@ -40,7 +40,9 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Administrator-only corrections to an open market's question, details, and
   closing time; outcome names remain immutable
 - Administrator cleanup of empty voided markets with no prediction history
-- Separate Resolved and Voided market filters
+- Reversible administrator archiving for refund-bearing voids, with preserved
+  access for administrators and participating traders
+- Separate Resolved, Voided, and Archived market filters
 - Activity feed, leaderboard, completed markets, and status-filtered personal
   prediction history
 - Sortable leaderboard ranked by realized **Profit / loss** by default
@@ -135,6 +137,8 @@ already been applied:
    administrator functions.
 3. `migrations/20260728_admin_market_corrections.sql` adds administrator-only
    market corrections and safe deletion of empty voided markets.
+4. `migrations/20260728_void_market_archiving.sql` adds reversible archiving
+   for refund-bearing voided markets.
 
 The email-allowlist migration does not enable the Auth hook automatically.
 Complete the authentication steps below after publishing the matching front-end
@@ -370,7 +374,8 @@ friend-exchange/
 ├── migrations/
 │   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
 │   ├── 20260727_email_allowlist.sql Existing-database allowlist migration
-│   └── 20260728_admin_market_corrections.sql Existing-database market-correction migration
+│   ├── 20260728_admin_market_corrections.sql Existing-database market-correction migration
+│   └── 20260728_void_market_archiving.sql Existing-database void-archive migration
 ├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
@@ -394,6 +399,8 @@ The focused checks:
   confirmation-aware signup interface remain present.
 - Verifies cumulative largest-wager, rolling 30-day activity, tie, and empty-state
   calculations for the leaderboard highlights.
+- Verifies administrator archive/restore rules and participating-trader access
+  to archived refund history.
 
 Run the focused checks with a current Node.js runtime:
 
@@ -404,7 +411,7 @@ node --test tests/phase1.test.js
 
 The tests are local and do not connect to Supabase.
 
-As of July 28, 2026, all 20 focused tests pass. These checks are regression
+As of July 28, 2026, all 22 focused tests pass. These checks are regression
 protection rather than a complete integration suite. The SQL checks verify that
 critical definitions are present; they do not execute PostgreSQL or prove live
 RLS behavior.

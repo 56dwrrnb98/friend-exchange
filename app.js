@@ -379,6 +379,7 @@
     state.outcomes = [];
     state.predictions = [];
     state.payouts = [];
+    state.marketFilter = "active";
     state.portfolioFilter = "all";
     state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
@@ -753,7 +754,15 @@
   }
 
   function renderMarkets() {
-    const markets = getAllMarkets();
+    const allMarkets = getAllMarkets();
+    const markets = allMarkets.filter((market) => !market.archived_at);
+    const archivedMarkets = allMarkets.filter((market) => {
+      if (!market.archived_at) return false;
+      return (
+        state.profile.is_admin ||
+        market.predictions.some((prediction) => prediction.user_id === state.user.id)
+      );
+    });
     const activeMarkets = markets.filter((market) => ["open", "closed"].includes(market.displayStatus));
     const resolvedMarkets = markets.filter((market) => market.displayStatus === "resolved");
     const voidedMarkets = markets.filter((market) => market.displayStatus === "void");
@@ -764,6 +773,7 @@
     if (state.marketFilter === "active") filtered = activeMarkets;
     if (state.marketFilter === "resolved") filtered = resolvedMarkets;
     if (state.marketFilter === "void") filtered = voidedMarkets;
+    if (state.marketFilter === "archived") filtered = archivedMarkets;
 
     dom.main.innerHTML = `
       <section class="hero">
@@ -811,6 +821,9 @@
         ${filterButton("resolved", "Resolved", resolvedMarkets.length)}
         ${filterButton("void", "Voided", voidedMarkets.length)}
         ${filterButton("all", "All", markets.length)}
+        ${(state.profile.is_admin || archivedMarkets.length > 0)
+          ? filterButton("archived", "Archived", archivedMarkets.length)
+          : ""}
       </div>
 
       <section class="market-grid">
@@ -843,11 +856,12 @@
   function renderNoMarkets(filter) {
     const isActive = filter === "active";
     const isVoided = filter === "void";
+    const isArchived = filter === "archived";
     return `
       <div class="empty-state" style="grid-column:1/-1">
-        <div class="empty-state-icon">${isActive ? "?" : isVoided ? "∅" : "✓"}</div>
-        <h2>${isActive ? "No active markets. Society is healing." : isVoided ? "No regulatory incidents." : "Nothing here yet."}</h2>
-        <p>${isActive ? "Create a question and give your friends something new to be confidently wrong about." : isVoided ? "Voided markets will remain here when refunds need an audit trail." : "Resolved markets will appear here after reality provides an answer."}</p>
+        <div class="empty-state-icon">${isActive ? "?" : isVoided ? "∅" : isArchived ? "□" : "✓"}</div>
+        <h2>${isActive ? "No active markets. Society is healing." : isVoided ? "No regulatory incidents." : isArchived ? "The archive is empty." : "Nothing here yet."}</h2>
+        <p>${isActive ? "Create a question and give your friends something new to be confidently wrong about." : isVoided ? "Voided markets will remain here when refunds need an audit trail." : isArchived ? "Archived voids with prediction history will appear here for administrators and participating traders." : "Resolved markets will appear here after reality provides an answer."}</p>
         ${isActive ? '<a class="button button-primary" href="#/create">Create the first market</a>' : ""}
       </div>
     `;
@@ -861,7 +875,7 @@
     return `
       <article class="market-card">
         <div class="market-card-top">
-          ${statusPill(market.displayStatus)}
+          ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
           <span class="tiny-pill">${market.outcomes.length} outcomes</span>
         </div>
         <h2><a href="#/market/${market.id}">${escapeHtml(market.question)}</a></h2>
@@ -885,6 +899,7 @@
   }
 
   function formatStatusFooter(market) {
+    if (market.archived_at) return "Voided · archived record";
     if (market.displayStatus === "closed") return "Awaiting reality";
     if (market.displayStatus === "void") return "All points refunded";
     if (market.displayStatus === "resolved") return `Winner: ${market.winner ? escapeHtml(market.winner.label) : "Resolved"}`;
@@ -898,10 +913,24 @@
       return;
     }
 
+    const userParticipated = market.predictions.some(
+      (prediction) => prediction.user_id === state.user.id,
+    );
+    if (market.archived_at && !state.profile.is_admin && !userParticipated) {
+      renderNotFound();
+      return;
+    }
+
     const isCreator = market.creator_id === state.user.id;
     const canManage = isCreator || state.profile.is_admin;
     const canEdit = state.profile.is_admin && market.status === "open";
     const canDelete = state.profile.is_admin && market.status === "void" && market.predictions.length === 0;
+    const canArchive =
+      state.profile.is_admin &&
+      market.status === "void" &&
+      !market.archived_at &&
+      market.predictions.length > 0;
+    const canRestore = state.profile.is_admin && market.status === "void" && Boolean(market.archived_at);
     const canPredict = market.displayStatus === "open";
     const canResolve = canManage && market.status === "open" && (market.isPastClose || state.profile.is_admin);
     const userPredictions = market.predictions.filter((prediction) => prediction.user_id === state.user.id);
@@ -913,13 +942,14 @@
       <div class="market-layout">
         <div class="market-main">
           <section class="market-hero">
-            <p class="eyebrow">Market #${market.id} · ${escapeHtml(statusLabel(market.displayStatus))}</p>
+            <p class="eyebrow">Market #${market.id} · ${escapeHtml(statusLabel(market.archived_at ? "archived" : market.displayStatus))}</p>
             <h1>${escapeHtml(market.question)}</h1>
             ${market.description ? `<p class="market-description">${escapeHtml(market.description)}</p>` : ""}
             <div class="market-meta-row">
               <span class="tiny-pill">Created by ${escapeHtml(market.creator?.display_name || "Unknown")}</span>
               <span class="tiny-pill">Closes ${formatDateTime(market.closes_at)}</span>
               <span class="tiny-pill">${formatNumber(market.actualTotal)} points in pool</span>
+              ${market.archived_at ? `<span class="tiny-pill">Archived ${formatDateTime(market.archived_at)}</span>` : ""}
             </div>
           </section>
 
@@ -929,7 +959,7 @@
                 <h2>${market.displayStatus === "resolved" ? "Final results" : "Community odds"}</h2>
                 <p>Display odds include ${market.outcomes[0]?.seed_points || 25} seed points per outcome. Payouts use real predictions only.</p>
               </div>
-              ${statusPill(market.displayStatus)}
+              ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
             </div>
 
             <div class="outcome-list">
@@ -998,8 +1028,10 @@
               ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
               ${canResolve ? '<button class="button button-mint" id="resolve-market" type="button">Resolve market</button>' : ""}
               ${canManage && market.status === "open" ? '<button class="button button-danger" id="void-market" type="button">Void and refund</button>' : ""}
+              ${canArchive ? '<button class="button button-secondary" id="archive-void-market" type="button">Archive voided market</button>' : ""}
+              ${canRestore ? '<button class="button button-secondary" id="restore-void-market" type="button">Restore to Voided list</button>' : ""}
               ${canDelete ? '<button class="button button-danger" id="delete-void-market" type="button">Delete empty voided market</button>' : ""}
-              <a class="button button-secondary" href="#/markets">Back to all markets</a>
+              <a class="button button-secondary" href="#/markets">Back to markets</a>
             </div>
           </section>
 
@@ -1025,6 +1057,8 @@
     document.querySelector("#edit-market")?.addEventListener("click", () => openEditMarketModal(market));
     document.querySelector("#resolve-market")?.addEventListener("click", () => openResolveModal(market));
     document.querySelector("#void-market")?.addEventListener("click", () => openVoidModal(market));
+    document.querySelector("#archive-void-market")?.addEventListener("click", () => openArchiveVoidMarketModal(market, true));
+    document.querySelector("#restore-void-market")?.addEventListener("click", () => openArchiveVoidMarketModal(market, false));
     document.querySelector("#delete-void-market")?.addEventListener("click", () => openDeleteVoidMarketModal(market));
   }
 
@@ -1718,7 +1752,7 @@
 
     if (market.displayStatus === "closed") resultLabel = "Awaiting result";
     if (isVoid) {
-      resultLabel = "Voided";
+      resultLabel = market.archived_at ? "Voided · Archived" : "Voided";
       valueLabel = `${formatNumber(amount)} pts refunded`;
     }
     if (isNoWinnerRefund) {
@@ -1745,6 +1779,7 @@
             <span>Outcome: <strong>${escapeHtml(outcome.label)}</strong></span>
             <span>Current odds: <strong>${formatPercent(outcome.percent)}</strong></span>
             <span>Status: <strong class="${resultClass}">${resultLabel}</strong></span>
+            ${market.archived_at ? "<span>Preserved in your archived history</span>" : ""}
           </div>
         </div>
         <div class="position-value">
@@ -2417,6 +2452,77 @@
     });
   }
 
+  function openArchiveVoidMarketModal(market, shouldArchive) {
+    const isValidArchive =
+      shouldArchive &&
+      !market.archived_at &&
+      market.predictions.length > 0;
+    const isValidRestore = !shouldArchive && Boolean(market.archived_at);
+
+    if (
+      !state.profile?.is_admin ||
+      market.status !== "void" ||
+      (!isValidArchive && !isValidRestore)
+    ) {
+      return;
+    }
+
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">${shouldArchive ? "Archive voided market" : "Restore archived market"}</p>
+          <h2>${shouldArchive ? "Move this record out of ordinary views?" : "Return this record to the Voided list?"}</h2>
+          <p>${escapeHtml(market.question)}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0">
+          ${shouldArchive
+            ? "The market will leave the ordinary market lists, but its predictions, refunds, and point history will remain unchanged."
+            : "The market will reappear in the ordinary Voided list. Its prediction and refund history will remain unchanged."}
+        </p>
+        <p class="trade-warning">
+          ${shouldArchive
+            ? "Administrators and traders who participated can still find this record under Archived."
+            : "Restoring does not reopen the market or change its voided status."}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+        <button class="button button-primary" id="confirm-archive-void" type="button">
+          ${shouldArchive ? "Archive record" : "Restore record"}
+        </button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-archive-void").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, shouldArchive ? "Archiving…" : "Restoring…");
+      const { error } = await state.client.rpc("set_void_market_archived", {
+        p_market_id: market.id,
+        p_archived: shouldArchive,
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      state.marketFilter = shouldArchive ? "archived" : "void";
+      window.location.hash = "#/markets";
+      await refreshData({ quiet: true });
+      showToast(
+        shouldArchive
+          ? "Voided market archived. Its refund history remains available."
+          : "Archived market restored to the Voided list.",
+        "success",
+      );
+    });
+  }
+
   function openHowItWorksModal() {
     openModal(`
       <div class="modal-header">
@@ -2689,6 +2795,7 @@
       closed: "Trading closed",
       resolved: "Resolved",
       void: "Voided",
+      archived: "Archived",
     };
     return labels[status] || status;
   }

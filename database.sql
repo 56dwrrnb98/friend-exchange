@@ -72,13 +72,17 @@ create table if not exists public.markets (
   winning_outcome_id bigint,
   created_at timestamptz not null default now(),
   resolved_at timestamptz,
+  archived_at timestamptz,
+  archived_by uuid references public.profiles(id) on delete set null,
 
   constraint markets_question_length
     check (char_length(btrim(question)) between 5 and 180),
   constraint markets_description_length
     check (description is null or char_length(description) <= 600),
   constraint markets_status_valid
-    check (status in ('open', 'resolved', 'void'))
+    check (status in ('open', 'resolved', 'void')),
+  constraint markets_archive_requires_void
+    check (archived_at is null or status = 'void')
 );
 
 create table if not exists public.outcomes (
@@ -207,6 +211,10 @@ create index if not exists markets_status_closes_idx
 
 create index if not exists markets_creator_idx
   on public.markets (creator_id);
+
+create index if not exists markets_archived_idx
+  on public.markets (archived_at)
+  where archived_at is not null;
 
 create index if not exists outcomes_market_idx
   on public.outcomes (market_id, sort_order);
@@ -942,6 +950,69 @@ begin
 end;
 $$;
 
+create or replace function public.set_void_market_archived(
+  p_market_id bigint,
+  p_archived boolean
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_is_admin boolean := false;
+  v_market public.markets%rowtype;
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  if p_archived is null then
+    raise exception 'Choose whether to archive or restore this market.';
+  end if;
+
+  select coalesce(is_admin, false)
+  into v_is_admin
+  from public.profiles
+  where id = v_user_id;
+
+  if not v_is_admin then
+    raise exception 'Only an administrator can archive or restore a voided market.';
+  end if;
+
+  select *
+  into v_market
+  from public.markets
+  where id = p_market_id
+  for update;
+
+  if not found then
+    raise exception 'Market not found.';
+  end if;
+
+  if v_market.status <> 'void' then
+    raise exception 'Only a voided market can be archived.';
+  end if;
+
+  if p_archived and not exists (
+    select 1
+    from public.predictions
+    where market_id = p_market_id
+  ) then
+    raise exception 'Empty voided markets should be deleted rather than archived.';
+  end if;
+
+  update public.markets
+  set
+    archived_at = case when p_archived then now() else null end,
+    archived_by = case when p_archived then v_user_id else null end
+  where id = p_market_id;
+
+  return p_market_id;
+end;
+$$;
+
 create or replace function public.award_points(
   p_user_id uuid,
   p_amount bigint,
@@ -1352,6 +1423,7 @@ revoke all on function public.place_prediction(bigint, bigint, bigint) from publ
 revoke all on function public.resolve_market(bigint, bigint) from public, anon;
 revoke all on function public.void_market(bigint) from public, anon;
 revoke all on function public.delete_empty_void_market(bigint) from public, anon;
+revoke all on function public.set_void_market_archived(bigint, boolean) from public, anon;
 revoke all on function public.award_points(uuid, bigint, text) from public, anon;
 revoke all on function public.hook_require_approved_email(jsonb)
   from public, anon, authenticated;
@@ -1370,6 +1442,7 @@ grant execute on function public.place_prediction(bigint, bigint, bigint) to aut
 grant execute on function public.resolve_market(bigint, bigint) to authenticated;
 grant execute on function public.void_market(bigint) to authenticated;
 grant execute on function public.delete_empty_void_market(bigint) to authenticated;
+grant execute on function public.set_void_market_archived(bigint, boolean) to authenticated;
 grant execute on function public.award_points(uuid, bigint, text) to authenticated;
 grant execute on function public.hook_require_approved_email(jsonb)
   to supabase_auth_admin;
@@ -1442,6 +1515,7 @@ $$;
 --   and lower(auth_user.email) = lower('you@example.com');
 --
 -- The admin can correct any open market, resolve any market early,
--- void any open market, delete an empty voided market, and award or
--- deduct points from the leaderboard/account screen.
+-- void any open market, archive or restore refund-bearing voids,
+-- delete an empty voided market, and award or deduct points from the
+-- leaderboard/account screen.
 -- ================================================================

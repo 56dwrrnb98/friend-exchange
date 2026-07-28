@@ -822,6 +822,11 @@ textarea::placeholder {
   color: var(--danger);
 }
 
+.status-archived {
+  background: #e9e8e2;
+  color: #5e625f;
+}
+
 .market-card h2 {
   margin: 18px 0 22px;
   font-size: clamp(1.3rem, 2.5vw, 1.9rem);
