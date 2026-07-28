@@ -1184,6 +1184,28 @@ textarea::placeholder {
   font-family: var(--font-mono);
 }
 
+.summary-row-resolution {
+  align-items: flex-start;
+}
+
+.resolution-summary {
+  min-width: 0;
+  max-width: 290px;
+  text-align: right;
+}
+
+.resolution-summary strong {
+  display: block;
+}
+
+.resolution-summary p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .live-position {
   margin-top: 18px;
   padding-top: 18px;
@@ -1850,6 +1872,14 @@ textarea::placeholder {
 .resolve-options {
   display: grid;
   gap: 8px;
+}
+
+.resolution-note-field {
+  margin-top: 18px;
+}
+
+.resolution-note-field textarea {
+  min-height: 88px;
 }
 
 .resolve-option {

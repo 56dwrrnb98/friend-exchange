@@ -1027,9 +1027,14 @@
                 <span>Your points committed</span>
                 <strong>${formatNumber(userCommitted)} pts</strong>
               </div>
-              <div class="summary-row">
+              <div class="summary-row summary-row-resolution">
                 <span>Resolution</span>
-                <strong>${market.displayStatus === "resolved" ? escapeHtml(market.winner?.label || "Resolved") : market.displayStatus === "void" ? "Voided" : "Pending"}</strong>
+                <div class="resolution-summary">
+                  <strong>${market.displayStatus === "resolved" ? escapeHtml(market.winner?.label || "Resolved") : market.displayStatus === "void" ? "Voided" : "Pending"}</strong>
+                  ${market.displayStatus === "resolved" && market.resolution_note
+                    ? `<p>${escapeHtml(market.resolution_note)}</p>`
+                    : ""}
+                </div>
               </div>
             </div>
 
@@ -2253,6 +2258,23 @@
               </label>
             `).join("")}
           </div>
+          <div class="form-field resolution-note-field">
+            <label for="resolution-note">Resolution note</label>
+            <textarea
+              id="resolution-note"
+              name="resolutionNote"
+              maxlength="280"
+              aria-describedby="resolution-note-help resolution-note-count"
+              placeholder="Power was restored at 10:40pm."
+              required
+            ></textarea>
+            <small id="resolution-note-help">
+              Briefly record what happened. This becomes part of the permanent settlement record.
+            </small>
+            <div class="character-counter-row">
+              <output id="resolution-note-count" class="character-counter" for="resolution-note" aria-label="Resolution note character count">0 / 280</output>
+            </div>
+          </div>
           <p class="trade-warning">
             This closes the market and distributes the full pool proportionally among winning predictors.
             If nobody selected the winning outcome, all predictions are refunded.
@@ -2265,16 +2287,28 @@
       </form>
     `);
 
+    bindCharacterCounter("resolution-note", "resolution-note-count", 280);
+
     document.querySelector("#resolve-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const winner = Number(new FormData(event.currentTarget).get("winner"));
+      const formData = new FormData(event.currentTarget);
+      const winner = Number(formData.get("winner"));
+      const resolutionNote = String(formData.get("resolutionNote") || "").trim();
+      const resolutionNoteField = event.currentTarget.querySelector("#resolution-note");
       const button = event.currentTarget.querySelector("button[type='submit']");
       const winningOutcome = market.outcomes.find((outcome) => outcome.id === winner);
+
+      if (!resolutionNote) {
+        showToast("Add a resolution note before resolving the market.", "error");
+        resolutionNoteField?.focus();
+        return;
+      }
 
       setButtonLoading(button, true, "Distributing points…");
       const { data, error } = await state.client.rpc("resolve_market", {
         p_market_id: market.id,
         p_winning_outcome_id: winner,
+        p_resolution_note: resolutionNote,
       });
       setButtonLoading(button, false);
 

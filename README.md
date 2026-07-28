@@ -33,6 +33,7 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Proportional pari-mutuel payouts from the full real-point pool
 - Automatic refunds when nobody selected the winning outcome
 - Creator-controlled resolution after the closing time
+- Required resolution notes that permanently explain the selected winner
 - Administration page for invitations and point adjustments
 - Dedicated desktop and mobile Admin navigation; the account modal contains
   account actions only
@@ -141,6 +142,8 @@ already been applied:
    market corrections and safe deletion of empty voided markets.
 4. `migrations/20260728_void_market_archiving.sql` adds reversible archiving
    for refund-bearing voided markets.
+5. `migrations/20260728_resolution_notes.sql` adds required settlement context
+   and resolver attribution to future market resolutions.
 
 The email-allowlist migration does not enable the Auth hook automatically.
 Complete the authentication steps below after publishing the matching front-end
@@ -377,7 +380,8 @@ friend-exchange/
 │   ├── 20260724_monthly_allowance.sql Existing-database allowance migration
 │   ├── 20260727_email_allowlist.sql Existing-database allowlist migration
 │   ├── 20260728_admin_market_corrections.sql Existing-database market-correction migration
-│   └── 20260728_void_market_archiving.sql Existing-database void-archive migration
+│   ├── 20260728_void_market_archiving.sql Existing-database void-archive migration
+│   └── 20260728_resolution_notes.sql Existing-database resolution-note migration
 ├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests
@@ -403,6 +407,7 @@ The focused checks:
   calculations for the leaderboard highlights.
 - Verifies administrator archive/restore rules and participating-trader access
   to archived refund history.
+- Verifies required resolution-note input, safe display, and database enforcement.
 
 Run the focused checks with a current Node.js runtime:
 

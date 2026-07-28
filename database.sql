@@ -70,6 +70,8 @@ create table if not exists public.markets (
   closes_at timestamptz not null,
   status text not null default 'open',
   winning_outcome_id bigint,
+  resolution_note text,
+  resolved_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   resolved_at timestamptz,
   archived_at timestamptz,
@@ -79,6 +81,11 @@ create table if not exists public.markets (
     check (char_length(btrim(question)) between 5 and 180),
   constraint markets_description_length
     check (description is null or char_length(description) <= 600),
+  constraint markets_resolution_note_length
+    check (
+      resolution_note is null
+      or char_length(btrim(resolution_note)) between 1 and 280
+    ),
   constraint markets_status_valid
     check (status in ('open', 'resolved', 'void')),
   constraint markets_archive_requires_void
@@ -578,7 +585,8 @@ $$;
 
 create or replace function public.resolve_market(
   p_market_id bigint,
-  p_winning_outcome_id bigint
+  p_winning_outcome_id bigint,
+  p_resolution_note text
 )
 returns jsonb
 language plpgsql
@@ -596,6 +604,14 @@ declare
 begin
   if v_user_id is null then
     raise exception 'You must be signed in.';
+  end if;
+
+  if nullif(btrim(p_resolution_note), '') is null then
+    raise exception 'A resolution note is required.';
+  end if;
+
+  if char_length(btrim(p_resolution_note)) > 280 then
+    raise exception 'The resolution note must be 280 characters or fewer.';
   end if;
 
   select coalesce(is_admin, false)
@@ -651,6 +667,8 @@ begin
     set
       status = 'resolved',
       winning_outcome_id = p_winning_outcome_id,
+      resolution_note = btrim(p_resolution_note),
+      resolved_by = v_user_id,
       resolved_at = now()
     where id = p_market_id;
 
@@ -701,6 +719,8 @@ begin
     set
       status = 'resolved',
       winning_outcome_id = p_winning_outcome_id,
+      resolution_note = btrim(p_resolution_note),
+      resolved_by = v_user_id,
       resolved_at = now()
     where id = p_market_id;
 
@@ -790,6 +810,8 @@ begin
   set
     status = 'resolved',
     winning_outcome_id = p_winning_outcome_id,
+    resolution_note = btrim(p_resolution_note),
+    resolved_by = v_user_id,
     resolved_at = now()
   where id = p_market_id;
 
@@ -1420,7 +1442,7 @@ revoke all on function public.update_display_name(text) from public, anon;
 revoke all on function public.create_market(text, text, timestamptz, text[]) from public, anon;
 revoke all on function public.edit_market(bigint, text, text, timestamptz) from public, anon;
 revoke all on function public.place_prediction(bigint, bigint, bigint) from public, anon;
-revoke all on function public.resolve_market(bigint, bigint) from public, anon;
+revoke all on function public.resolve_market(bigint, bigint, text) from public, anon;
 revoke all on function public.void_market(bigint) from public, anon;
 revoke all on function public.delete_empty_void_market(bigint) from public, anon;
 revoke all on function public.set_void_market_archived(bigint, boolean) from public, anon;
@@ -1439,7 +1461,7 @@ grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.create_market(text, text, timestamptz, text[]) to authenticated;
 grant execute on function public.edit_market(bigint, text, text, timestamptz) to authenticated;
 grant execute on function public.place_prediction(bigint, bigint, bigint) to authenticated;
-grant execute on function public.resolve_market(bigint, bigint) to authenticated;
+grant execute on function public.resolve_market(bigint, bigint, text) to authenticated;
 grant execute on function public.void_market(bigint) to authenticated;
 grant execute on function public.delete_empty_void_market(bigint) to authenticated;
 grant execute on function public.set_void_market_archived(bigint, boolean) to authenticated;
