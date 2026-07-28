@@ -985,6 +985,8 @@ textarea::placeholder {
   max-width: 720px;
   margin: 18px 0 0;
   color: rgba(255, 254, 248, 0.68);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .market-meta-row {
@@ -1381,6 +1383,23 @@ textarea::placeholder {
 
 .form-field-full {
   grid-column: 1 / -1;
+}
+
+.character-counter-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.character-counter {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  transition: color 160ms ease;
+}
+
+.character-counter.is-near-limit {
+  color: var(--danger);
 }
 
 .choice-builder {

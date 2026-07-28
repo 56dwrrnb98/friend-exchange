@@ -1160,7 +1160,10 @@
             </div>
             <div class="form-field form-field-full">
               <label for="market-description">Details <span class="muted">(optional)</span></label>
-              <textarea id="market-description" name="description" maxlength="600" placeholder="Define any rules, edge cases, or highly specific party jurisprudence."></textarea>
+              <textarea id="market-description" name="description" maxlength="600" aria-describedby="market-description-count" placeholder="Define any rules, edge cases, or highly specific party jurisprudence."></textarea>
+              <div class="character-counter-row">
+                <output id="market-description-count" class="character-counter" for="market-description" aria-label="Description character count">0 / 600</output>
+              </div>
             </div>
           </div>
         </section>
@@ -1205,6 +1208,8 @@
         </footer>
       </form>
     `;
+
+    bindCharacterCounter("market-description", "market-description-count");
 
     const choiceBuilder = document.querySelector("#choice-builder");
     const choices = ["Yes", "No"];
@@ -2322,7 +2327,11 @@
                 id="edit-market-description"
                 name="description"
                 maxlength="600"
+                aria-describedby="edit-market-description-count"
               >${escapeHtml(market.description || "")}</textarea>
+              <div class="character-counter-row">
+                <output id="edit-market-description-count" class="character-counter" for="edit-market-description" aria-label="Description character count">0 / 600</output>
+              </div>
             </div>
             <div class="form-field form-field-full">
               <label for="edit-market-closes">Predictions close</label>
@@ -2346,6 +2355,8 @@
         </div>
       </form>
     `, "edit-market-modal");
+
+    bindCharacterCounter("edit-market-description", "edit-market-description-count");
 
     document.querySelector("#edit-market-form").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -2904,6 +2915,22 @@
   function parseWholeNumber(value) {
     const number = Number(value);
     return Number.isInteger(number) ? number : null;
+  }
+
+  function updateCharacterCounter(textarea, counter, maxLength = 600) {
+    const count = String(textarea.value || "").length;
+    counter.textContent = `${count} / ${maxLength}`;
+    counter.classList.toggle("is-near-limit", count >= maxLength - 50);
+  }
+
+  function bindCharacterCounter(textareaId, counterId, maxLength = 600) {
+    const textarea = document.querySelector(`#${textareaId}`);
+    const counter = document.querySelector(`#${counterId}`);
+    if (!textarea || !counter) return;
+
+    const update = () => updateCharacterCounter(textarea, counter, maxLength);
+    textarea.addEventListener("input", update);
+    update();
   }
 
   function escapeHtml(value) {
