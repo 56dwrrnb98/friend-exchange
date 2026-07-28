@@ -37,6 +37,7 @@ production status, and future-work guardrails, see `PROJECT_CONTEXT.md`.
 - Administration page for invitations and point adjustments
 - Dedicated desktop and mobile Admin navigation; the account modal contains
   account actions only
+- A curated profile-icon picker with initials as the default and fallback
 - Administrator market controls for early resolution and voiding
 - Administrator-only corrections to an open market's question, details, and
   closing time; outcome names remain immutable
@@ -144,6 +145,8 @@ already been applied:
    for refund-bearing voided markets.
 5. `migrations/20260728_resolution_notes.sql` adds required settlement context
    and resolver attribution to future market resolutions.
+6. `migrations/20260728_profile_icons.sql` adds the curated profile-icon field
+   and the protected profile-saving function.
 
 The email-allowlist migration does not enable the Auth hook automatically.
 Complete the authentication steps below after publishing the matching front-end
@@ -381,7 +384,8 @@ friend-exchange/
 │   ├── 20260727_email_allowlist.sql Existing-database allowlist migration
 │   ├── 20260728_admin_market_corrections.sql Existing-database market-correction migration
 │   ├── 20260728_void_market_archiving.sql Existing-database void-archive migration
-│   └── 20260728_resolution_notes.sql Existing-database resolution-note migration
+│   ├── 20260728_resolution_notes.sql Existing-database resolution-note migration
+│   └── 20260728_profile_icons.sql Existing-database profile-icon migration
 ├── PROJECT_CONTEXT.md Authoritative product, brand, architecture, and status specification
 ├── tests/
 │   └── phase1.test.js Focused front-end and calculation regression tests

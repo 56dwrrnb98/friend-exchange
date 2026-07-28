@@ -16,12 +16,53 @@ begin;
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
+  profile_icon text,
   balance bigint not null default 1000,
   is_admin boolean not null default false,
   created_at timestamptz not null default now(),
 
   constraint profiles_display_name_length
     check (char_length(btrim(display_name)) between 2 and 32),
+  constraint profiles_profile_icon_allowed
+    check (
+      profile_icon is null
+      or profile_icon in (
+        'baseball',
+        'beer-mug-empty',
+        'bolt',
+        'burger',
+        'car-side',
+        'crown',
+        'dragon',
+        'face-grin-beam',
+        'face-grin-hearts',
+        'face-grin-stars',
+        'face-grin-tongue-wink',
+        'face-laugh-squint',
+        'flag-checkered',
+        'football',
+        'ghost',
+        'guitar',
+        'hand-peace',
+        'ice-cream',
+        'jet-fighter',
+        'masks-theater',
+        'motorcycle',
+        'music',
+        'palette',
+        'paw',
+        'peace',
+        'pizza-slice',
+        'poo',
+        'robot',
+        'rocket',
+        'sack-dollar',
+        'skull',
+        'tree',
+        'truck-monster',
+        'wine-glass'
+      )
+    ),
   constraint profiles_balance_nonnegative
     check (balance >= 0)
 );
@@ -323,6 +364,79 @@ begin
 
   update public.profiles
   set display_name = v_name
+  where id = v_user_id;
+
+  if not found then
+    raise exception 'Profile not found.';
+  end if;
+end;
+$$;
+
+create or replace function public.update_profile(
+  p_display_name text,
+  p_profile_icon text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_name text := btrim(coalesce(p_display_name, ''));
+  v_icon text := nullif(btrim(coalesce(p_profile_icon, '')), '');
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  if char_length(v_name) < 2 or char_length(v_name) > 32 then
+    raise exception 'Display names must be between 2 and 32 characters.';
+  end if;
+
+  if v_icon is not null and v_icon not in (
+    'baseball',
+    'beer-mug-empty',
+    'bolt',
+    'burger',
+    'car-side',
+    'crown',
+    'dragon',
+    'face-grin-beam',
+    'face-grin-hearts',
+    'face-grin-stars',
+    'face-grin-tongue-wink',
+    'face-laugh-squint',
+    'flag-checkered',
+    'football',
+    'ghost',
+    'guitar',
+    'hand-peace',
+    'ice-cream',
+    'jet-fighter',
+    'masks-theater',
+    'motorcycle',
+    'music',
+    'palette',
+    'paw',
+    'peace',
+    'pizza-slice',
+    'poo',
+    'robot',
+    'rocket',
+    'sack-dollar',
+    'skull',
+    'tree',
+    'truck-monster',
+    'wine-glass'
+  ) then
+    raise exception 'Choose a supported profile icon.';
+  end if;
+
+  update public.profiles
+  set
+    display_name = v_name,
+    profile_icon = v_icon
   where id = v_user_id;
 
   if not found then
@@ -1439,6 +1553,7 @@ using (
 
 -- Function execution permissions.
 revoke all on function public.update_display_name(text) from public, anon;
+revoke all on function public.update_profile(text, text) from public, anon;
 revoke all on function public.create_market(text, text, timestamptz, text[]) from public, anon;
 revoke all on function public.edit_market(bigint, text, text, timestamptz) from public, anon;
 revoke all on function public.place_prediction(bigint, bigint, bigint) from public, anon;
@@ -1458,6 +1573,7 @@ revoke all on function public.remove_approved_signup_email(text)
 revoke all on function public.grant_monthly_allowance(date) from public, anon, authenticated;
 
 grant execute on function public.update_display_name(text) to authenticated;
+grant execute on function public.update_profile(text, text) to authenticated;
 grant execute on function public.create_market(text, text, timestamptz, text[]) to authenticated;
 grant execute on function public.edit_market(bigint, text, text, timestamptz) to authenticated;
 grant execute on function public.place_prediction(bigint, bigint, bigint) to authenticated;

@@ -4,6 +4,43 @@
   "use strict";
 
   const config = window.FRIEND_EXCHANGE_CONFIG || {};
+  const PROFILE_ICON_OPTIONS = Object.freeze([
+    { name: "crown", label: "Crown" },
+    { name: "bolt", label: "Lightning bolt" },
+    { name: "rocket", label: "Rocket" },
+    { name: "sack-dollar", label: "Money bag" },
+    { name: "baseball", label: "Baseball" },
+    { name: "football", label: "Football" },
+    { name: "flag-checkered", label: "Checkered flag" },
+    { name: "car-side", label: "Car" },
+    { name: "motorcycle", label: "Motorcycle" },
+    { name: "truck-monster", label: "Monster truck" },
+    { name: "jet-fighter", label: "Jet fighter" },
+    { name: "guitar", label: "Guitar" },
+    { name: "music", label: "Music" },
+    { name: "palette", label: "Artist palette" },
+    { name: "masks-theater", label: "Theater masks" },
+    { name: "burger", label: "Burger" },
+    { name: "pizza-slice", label: "Pizza" },
+    { name: "ice-cream", label: "Ice cream" },
+    { name: "beer-mug-empty", label: "Beer mug" },
+    { name: "wine-glass", label: "Wine glass" },
+    { name: "face-grin-beam", label: "Beaming face" },
+    { name: "face-grin-hearts", label: "Heart eyes" },
+    { name: "face-grin-stars", label: "Star eyes" },
+    { name: "face-laugh-squint", label: "Laughing face" },
+    { name: "face-grin-tongue-wink", label: "Winking face" },
+    { name: "hand-peace", label: "Peace hand" },
+    { name: "peace", label: "Peace sign" },
+    { name: "paw", label: "Paw" },
+    { name: "tree", label: "Tree" },
+    { name: "dragon", label: "Dragon" },
+    { name: "ghost", label: "Ghost" },
+    { name: "robot", label: "Robot" },
+    { name: "skull", label: "Skull" },
+    { name: "poo", label: "Poo" },
+  ]);
+  const PROFILE_ICON_NAMES = new Set(PROFILE_ICON_OPTIONS.map((icon) => icon.name));
   const dom = {
     app: document.querySelector("#app"),
     main: document.querySelector("#main-content"),
@@ -409,7 +446,7 @@
 
     const [profilesResult, marketsResult, outcomesResult, predictionsResult, payoutsResult] =
       await Promise.all([
-        state.client.from("profiles").select("id, display_name, balance, is_admin, created_at"),
+        state.client.from("profiles").select("id, display_name, profile_icon, balance, is_admin, created_at"),
         state.client.from("markets").select("*").order("created_at", { ascending: false }),
         state.client.from("outcomes").select("*").order("sort_order", { ascending: true }),
         state.client.from("predictions").select("*").order("created_at", { ascending: false }),
@@ -1126,7 +1163,7 @@
 
     return `
       <div class="activity-item">
-        <div class="avatar">${escapeHtml(initials(name))}</div>
+        ${renderProfileAvatar(profile || { display_name: name })}
         <div class="activity-copy">
           <strong>${escapeHtml(name)}</strong>
           <span> put ${formatNumber(prediction.amount)} pts on </span>
@@ -1542,7 +1579,7 @@
                     <td class="rank-cell">#${index + 1}</td>
                     <td>
                       <div class="name-cell">
-                        <span class="avatar">${escapeHtml(initials(profile.display_name))}</span>
+                        ${renderProfileAvatar(profile)}
                         ${escapeHtml(profile.display_name)}
                         ${profile.is_admin ? '<span class="tiny-pill">Admin</span>' : ""}
                       </div>
@@ -2265,7 +2302,7 @@
               name="resolutionNote"
               maxlength="280"
               aria-describedby="resolution-note-help resolution-note-count"
-              placeholder="Power was restored at 10:40pm."
+              placeholder="Spain beat Argentina 1-0"
               required
             ></textarea>
             <small id="resolution-note-help">
@@ -2624,6 +2661,40 @@
   }
 
   function openAccountModal() {
+    const selectedIcon = normalizeProfileIcon(state.profile.profile_icon);
+    const iconChoices = [
+      `
+        <label class="profile-icon-option" title="Initials">
+          <input
+            class="profile-icon-input"
+            type="radio"
+            name="profileIcon"
+            value=""
+            ${selectedIcon ? "" : "checked"}
+          />
+          <span class="profile-icon-choice-preview profile-icon-initials" aria-hidden="true">
+            ${escapeHtml(initials(state.profile.display_name))}
+          </span>
+          <span class="visually-hidden">Initials</span>
+        </label>
+      `,
+      ...PROFILE_ICON_OPTIONS.map((icon) => `
+        <label class="profile-icon-option" title="${escapeAttribute(icon.label)}">
+          <input
+            class="profile-icon-input"
+            type="radio"
+            name="profileIcon"
+            value="${escapeAttribute(icon.name)}"
+            ${selectedIcon === icon.name ? "checked" : ""}
+          />
+          <span class="profile-icon-choice-preview" aria-hidden="true">
+            <i class="fa-solid fa-${escapeAttribute(icon.name)}"></i>
+          </span>
+          <span class="visually-hidden">${escapeHtml(icon.label)}</span>
+        </label>
+      `),
+    ].join("");
+
     openModal(`
       <div class="modal-header">
         <div>
@@ -2649,6 +2720,13 @@
             <label for="account-name">Display name</label>
             <input id="account-name" name="displayName" minlength="2" maxlength="32" value="${escapeAttribute(state.profile.display_name)}" required />
           </div>
+          <fieldset class="profile-icon-field" aria-describedby="profile-icon-help">
+            <legend>Profile icon</legend>
+            <p id="profile-icon-help">Choose how you appear on the leaderboard.</p>
+            <div class="profile-icon-grid">
+              ${iconChoices}
+            </div>
+          </fieldset>
           <p class="trade-warning">
             Your email and password let you access the same balance, predictions, and markets from any device.
             To change a forgotten password, sign out and use the password-reset link on the login screen.
@@ -2656,10 +2734,10 @@
         </div>
         <div class="modal-footer">
           <button class="button button-ghost" id="account-sign-out" type="button">Sign out</button>
-          <button class="button button-primary" type="submit">Save name</button>
+          <button class="button button-primary" type="submit">Save changes</button>
         </div>
       </form>
-    `);
+    `, "account-modal");
 
     document.querySelector("#account-sign-out").addEventListener("click", async (event) => {
       const button = event.currentTarget;
@@ -2678,13 +2756,24 @@
       showToast("Signed out. Your points are still imaginary, but safely stored.", "success");
     });
 
+    const accountNameInput = document.querySelector("#account-name");
+    const initialsPreview = document.querySelector(".profile-icon-initials");
+    accountNameInput.addEventListener("input", () => {
+      initialsPreview.textContent = initials(accountNameInput.value);
+    });
+
     document.querySelector("#account-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const name = String(new FormData(event.currentTarget).get("displayName") || "").trim();
+      const formData = new FormData(event.currentTarget);
+      const name = String(formData.get("displayName") || "").trim();
+      const profileIcon = normalizeProfileIcon(formData.get("profileIcon"));
       const button = event.currentTarget.querySelector("button[type='submit']");
 
       setButtonLoading(button, true, "Saving…");
-      const { error } = await state.client.rpc("update_display_name", { p_display_name: name });
+      const { error } = await state.client.rpc("update_profile", {
+        p_display_name: name,
+        p_profile_icon: profileIcon,
+      });
       setButtonLoading(button, false);
 
       if (error) {
@@ -2694,7 +2783,7 @@
 
       closeModal();
       await refreshData({ quiet: true });
-      showToast("Display name updated.", "success");
+      showToast("Profile updated.", "success");
     });
   }
 
@@ -2936,6 +3025,21 @@
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase())
       .join("") || "?";
+  }
+
+  function normalizeProfileIcon(value) {
+    const icon = String(value || "").trim();
+    return PROFILE_ICON_NAMES.has(icon) ? icon : null;
+  }
+
+  function renderProfileAvatar(profile) {
+    const name = profile?.display_name || "Unknown trader";
+    const profileIcon = normalizeProfileIcon(profile?.profile_icon);
+    const content = profileIcon
+      ? `<i class="fa-solid fa-${escapeAttribute(profileIcon)}"></i>`
+      : escapeHtml(initials(name));
+
+    return `<span class="avatar" aria-hidden="true">${content}</span>`;
   }
 
   function pluralize(count, singular, plural = `${singular}s`) {

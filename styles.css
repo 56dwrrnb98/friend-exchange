@@ -46,6 +46,17 @@ body.modal-open {
   overflow: hidden;
 }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 button,
 input,
 textarea,
@@ -1143,6 +1154,10 @@ textarea::placeholder {
   font-size: 0.75rem;
 }
 
+.avatar i {
+  font-size: 0.95rem;
+}
+
 .activity-copy {
   min-width: 0;
   font-size: 0.8rem;
@@ -1751,6 +1766,37 @@ textarea::placeholder {
   animation: modal-in 160ms ease-out;
 }
 
+.account-modal {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.account-modal > form {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.account-modal .modal-header,
+.account-modal .modal-footer {
+  flex: 0 0 auto;
+}
+
+.account-modal .modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.account-modal .modal-footer {
+  border-top: 1px solid var(--line);
+  background: var(--paper-strong);
+}
+
 .admin-points-modal {
   width: min(100%, 480px);
 }
@@ -1803,6 +1849,88 @@ textarea::placeholder {
 
 .modal-body {
   padding: 22px;
+}
+
+.profile-icon-field {
+  min-width: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.profile-icon-field legend {
+  margin-bottom: 5px;
+  padding: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.profile-icon-field > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.profile-icon-grid {
+  display: grid;
+  width: 100%;
+  max-width: 300px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: clamp(6px, 2vw, 10px);
+  margin-top: 12px;
+}
+
+.profile-icon-option {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  cursor: pointer;
+}
+
+.profile-icon-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-icon-choice-preview {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--paper-strong);
+  color: var(--ink-soft);
+  font-size: 1rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease,
+    background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.profile-icon-initials {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.profile-icon-option:hover .profile-icon-choice-preview {
+  border-color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.profile-icon-input:focus-visible + .profile-icon-choice-preview {
+  outline: 3px solid rgba(170, 255, 92, 0.5);
+  outline-offset: 2px;
+}
+
+.profile-icon-input:checked + .profile-icon-choice-preview {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--mint);
+  box-shadow: 0 0 0 2px var(--paper-strong), 0 0 0 4px var(--ink);
 }
 
 .prediction-fields {
