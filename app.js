@@ -942,7 +942,9 @@
     const canPredict = market.displayStatus === "open";
     const canResolve = canManage && market.status === "open" && (market.isPastClose || state.profile.is_admin);
     const canVoid = canManage && market.status === "open";
-    const hasMarketControls = canEdit || canResolve || canVoid || canArchive || canRestore || canDelete;
+    const hasMarketControls =
+      state.profile.is_admin &&
+      (canEdit || canResolve || canVoid || canArchive || canRestore || canDelete);
     const userPredictions = market.predictions.filter((prediction) => prediction.user_id === state.user.id);
     const userCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortedOutcomes = [...market.outcomes].sort((a, b) => b.percent - a.percent);
@@ -1037,13 +1039,13 @@
               ${canPredict ? '<button class="button button-primary" id="predict-outcome" type="button">Place a prediction</button>' : ""}
               ${hasMarketControls ? `
                 <div class="sidebar-management">
-                  <p class="sidebar-actions-label">Market controls</p>
+                  <p class="eyebrow sidebar-actions-label">Market controls</p>
                   <div class="sidebar-management-grid">
                     ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
-                    ${canResolve ? '<button class="button button-secondary" id="resolve-market" type="button">Resolve market</button>' : ""}
+                    ${canVoid ? '<button class="button button-danger" id="void-market" type="button">Void &amp; refund</button>' : ""}
+                    ${canResolve ? '<button class="button button-secondary button-wide" id="resolve-market" type="button">Resolve market</button>' : ""}
                     ${canArchive ? '<button class="button button-secondary button-wide" id="archive-void-market" type="button">Archive voided market</button>' : ""}
                     ${canRestore ? '<button class="button button-secondary button-wide" id="restore-void-market" type="button">Restore to Voided list</button>' : ""}
-                    ${canVoid ? '<button class="button button-danger button-danger-subtle button-wide" id="void-market" type="button">Void and refund</button>' : ""}
                     ${canDelete ? '<button class="button button-danger button-danger-subtle button-wide" id="delete-void-market" type="button">Delete empty voided market</button>' : ""}
                   </div>
                 </div>
