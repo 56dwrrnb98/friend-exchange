@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 504 504">
+  <!-- Generator: Adobe Illustrator 30.6.0, SVG Export Plug-In . SVG Version: 2.1.4 Build 109)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #b8ff6a;
+      }
+
+      .st1 {
+        fill: #f4f2e9;
+      }
+
+      .st2 {
+        fill: #101b18;
+      }
+    </style>
+  </defs>
+  <rect class="st2" width="504" height="504"/>
+  <g>
+    <polygon class="st0" points="282.51 186.69 282.44 186.59 282.44 186.59 282.51 186.69"/>
+    <polygon class="st0" points="156.97 232.2 156.97 200.65 156.97 196.79 156.97 186.69 195.48 186.69 204.61 186.69 215.66 186.69 282.51 186.69 282.44 186.59 246.13 128.73 90 128.73 90 136.48 90 186.59 90 375.27 156.97 375.27 156.97 290.06 205.12 290.06 231.04 250.79 218.82 232.2 156.97 232.2"/>
+    <polygon class="st1" points="400.62 147.87 400.62 147.87 413.28 128.73 336.86 128.73 331.95 136.48 331.95 136.48 316.22 161.29 293.72 196.79 291.27 200.65 213.78 200.65 234.53 232.2 246.74 250.79 220.82 290.06 174.17 360.74 174.17 360.74 164.58 375.27 241.13 375.27 241.13 375.27 287.42 301.63 334.05 375.27 414 375.27 414 374.56 332.3 251.14 400.62 147.87"/>
+  </g>
+  <metadata>
+    <sfw xmlns="http://ns.adobe.com/SaveForWeb/1.0/">
+      <slices/>
+      <sliceSourceBounds x="0" y="-504" width="504" height="504" bottomLeftOrigin="true"/>
+      <optimizationSettings>
+        <targetSettings fileFormat="PNG24Format" targetSettingsID="0">
+          <PNG24Format filtered="false" interlaced="false" matteColor="#FFFFFF" noMatteColor="false" transparency="false"/>
+        </targetSettings>
+      </optimizationSettings>
+    </sfw>
+  </metadata>
+</svg>
