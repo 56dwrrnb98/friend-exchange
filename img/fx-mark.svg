@@ -18,7 +18,7 @@
   <metadata>
     <sfw xmlns="http://ns.adobe.com/SaveForWeb/1.0/">
       <slices/>
-      <sliceSourceBounds x="90" y="-375.27" width="324" height="246.53" bottomLeftOrigin="true"/>
+      <sliceSourceBounds x="0" y="0" width="324" height="246.53" bottomLeftOrigin="true"/>
       <optimizationSettings>
         <targetSettings fileFormat="PNG24Format" targetSettingsID="0">
           <PNG24Format filtered="false" interlaced="false" matteColor="#FFFFFF" noMatteColor="false" transparency="false"/>
