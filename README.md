@@ -24,6 +24,7 @@ There is no build step, package manager, framework, or custom server.
 - A monthly allowance for recently active members
 - Markets with 2–10 outcomes, including simple Yes/No questions
 - Community odds based on the points committed to each outcome
+- Per-outcome latest-trade movement and expandable soft-step odds history
 - Multiple predictions per member and market
 - Proportional pari-mutuel payouts
 - Automatic refunds when nobody selected the winning outcome

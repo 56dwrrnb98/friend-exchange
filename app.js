@@ -41,6 +41,18 @@
     { name: "poo", label: "Poo" },
   ]);
   const PROFILE_ICON_NAMES = new Set(PROFILE_ICON_OPTIONS.map((icon) => icon.name));
+  const ODDS_HISTORY_COLORS = Object.freeze([
+    "#101b18",
+    "#327ca5",
+    "#c45518",
+    "#6c5ab4",
+    "#347a16",
+    "#bd2e24",
+    "#137b73",
+    "#aa4376",
+    "#9a6a00",
+    "#596d80",
+  ]);
   const dom = {
     app: document.querySelector("#app"),
     main: document.querySelector("#main-content"),
@@ -80,6 +92,9 @@
     portfolioFilter: "all",
     leaderboardSortKey: "profitLoss",
     leaderboardSortDirection: "desc",
+    oddsHistoryMarketId: null,
+    oddsHistoryOutcomeId: null,
+    lastRenderedMarketOdds: new Map(),
     loading: false,
     realtimeChannel: null,
     realtimeTimer: null,
@@ -420,6 +435,9 @@
     state.portfolioFilter = "all";
     state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
+    state.oddsHistoryMarketId = null;
+    state.oddsHistoryOutcomeId = null;
+    state.lastRenderedMarketOdds = new Map();
     state.loading = false;
   }
 
@@ -634,6 +652,529 @@
 
   function getAllMarkets() {
     return state.markets.map(enrichMarket);
+  }
+
+  function getTimestamp(value, fallback = null) {
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : fallback;
+  }
+
+  function sortMarketPredictions(predictions) {
+    return [...predictions].sort((a, b) => {
+      const timeDifference =
+        getTimestamp(a.created_at, 0) - getTimestamp(b.created_at, 0);
+      if (timeDifference !== 0) return timeDifference;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+  }
+
+  function calculateOddsSnapshot(outcomes, actualPointsByOutcome) {
+    const displayTotal = outcomes.reduce(
+      (sum, outcome) =>
+        sum +
+        Number(outcome.seed_points || 0) +
+        Number(actualPointsByOutcome.get(outcome.id) || 0),
+      0,
+    );
+    const fallbackPercent = 100 / Math.max(outcomes.length, 1);
+
+    return new Map(
+      outcomes.map((outcome) => {
+        const displayPoints =
+          Number(outcome.seed_points || 0) +
+          Number(actualPointsByOutcome.get(outcome.id) || 0);
+        return [
+          outcome.id,
+          displayTotal > 0 ? (displayPoints / displayTotal) * 100 : fallbackPercent,
+        ];
+      }),
+    );
+  }
+
+  function getMarketOddsStopTimestamp(market, startTimestamp, lastPredictionTimestamp, now) {
+    const closesAt = getTimestamp(market.closes_at);
+    const resolvedAt = getTimestamp(market.resolved_at);
+    let stopTimestamp;
+
+    if (market.status === "open") {
+      stopTimestamp = Number.isFinite(closesAt) ? Math.min(now, closesAt) : now;
+    } else {
+      const stopCandidates = [closesAt, resolvedAt].filter(Number.isFinite);
+      stopTimestamp = stopCandidates.length
+        ? Math.min(...stopCandidates)
+        : lastPredictionTimestamp || now;
+    }
+
+    return Math.max(
+      startTimestamp,
+      lastPredictionTimestamp || startTimestamp,
+      stopTimestamp,
+    );
+  }
+
+  function buildMarketOddsTimeline(market, now = Date.now()) {
+    const predictions = sortMarketPredictions(market.predictions || []);
+    const firstPredictionTimestamp = predictions.length
+      ? getTimestamp(predictions[0].created_at, now)
+      : now;
+    const startTimestamp = getTimestamp(market.created_at, firstPredictionTimestamp);
+    const lastPredictionTimestamp = predictions.length
+      ? getTimestamp(predictions[predictions.length - 1].created_at, startTimestamp)
+      : null;
+    const endTimestamp = getMarketOddsStopTimestamp(
+      market,
+      startTimestamp,
+      lastPredictionTimestamp,
+      now,
+    );
+    const actualPointsByOutcome = new Map(
+      market.outcomes.map((outcome) => [outcome.id, 0]),
+    );
+    const points = [{
+      timestamp: startTimestamp,
+      odds: calculateOddsSnapshot(market.outcomes, actualPointsByOutcome),
+      eventIndex: null,
+    }];
+    const events = [];
+
+    predictions.forEach((prediction) => {
+      const timestamp = Math.max(
+        startTimestamp,
+        getTimestamp(prediction.created_at, startTimestamp),
+      );
+      const beforeOdds = calculateOddsSnapshot(
+        market.outcomes,
+        actualPointsByOutcome,
+      );
+      actualPointsByOutcome.set(
+        prediction.outcome_id,
+        Number(actualPointsByOutcome.get(prediction.outcome_id) || 0) +
+          Number(prediction.amount || 0),
+      );
+      const afterOdds = calculateOddsSnapshot(
+        market.outcomes,
+        actualPointsByOutcome,
+      );
+      const event = {
+        index: events.length,
+        prediction,
+        timestamp,
+        outcomeId: prediction.outcome_id,
+        beforeOdds,
+        afterOdds,
+        fromPercent: Number(beforeOdds.get(prediction.outcome_id) || 0),
+        toPercent: Number(afterOdds.get(prediction.outcome_id) || 0),
+      };
+      event.delta = event.toPercent - event.fromPercent;
+      events.push(event);
+      points.push({
+        timestamp,
+        odds: afterOdds,
+        eventIndex: event.index,
+      });
+    });
+
+    const latestPoint = points[points.length - 1];
+    if (endTimestamp > latestPoint.timestamp) {
+      points.push({
+        timestamp: endTimestamp,
+        odds: latestPoint.odds,
+        eventIndex: null,
+      });
+    }
+
+    return {
+      startTimestamp,
+      endTimestamp,
+      points,
+      events,
+    };
+  }
+
+  function getOddsMovementDirection(currentPercent, referencePercent) {
+    if (formatPercent(currentPercent) === formatPercent(referencePercent)) {
+      return "flat";
+    }
+    return currentPercent > referencePercent ? "up" : "down";
+  }
+
+  function getMarketMovementByOutcome(market, timeline) {
+    const latestEvent = timeline.events[timeline.events.length - 1] || null;
+    const currentOdds =
+      latestEvent?.afterOdds ||
+      timeline.points[timeline.points.length - 1]?.odds ||
+      new Map();
+
+    return new Map(
+      market.outcomes.map((outcome) => {
+        const currentPercent = Number(currentOdds.get(outcome.id) || 0);
+        const referencePercent = latestEvent
+          ? Number(latestEvent.beforeOdds.get(outcome.id) || 0)
+          : currentPercent;
+        return [
+          outcome.id,
+          {
+            currentPercent,
+            referencePercent,
+            delta: currentPercent - referencePercent,
+            hasTrade: Boolean(latestEvent),
+            direction: getOddsMovementDirection(
+              currentPercent,
+              referencePercent,
+            ),
+          },
+        ];
+      }),
+    );
+  }
+
+  function formatMovementMagnitude(value) {
+    const magnitude = Math.abs(Number(value) || 0);
+    if (magnitude < 0.05) return "0";
+    const rounded = magnitude < 10
+      ? Number(magnitude.toFixed(1))
+      : Math.round(magnitude);
+    return String(rounded);
+  }
+
+  function getHistoryColor(market, outcomeId) {
+    const index = Math.max(
+      market.outcomes.findIndex((outcome) => outcome.id === outcomeId),
+      0,
+    );
+    return ODDS_HISTORY_COLORS[index % ODDS_HISTORY_COLORS.length];
+  }
+
+  function buildRoundedStepPath(
+    chartPoints,
+    outcomeId,
+    xForTradeNumber,
+    yForPercent,
+  ) {
+    const firstPoint = chartPoints[0];
+    if (!firstPoint) return "";
+
+    const formatCoordinate = (value) => Number(value).toFixed(2);
+    let previousX = xForTradeNumber(0);
+    let previousY = yForPercent(
+      Number(firstPoint.odds.get(outcomeId) || 0),
+    );
+    const commands = [
+      `M ${formatCoordinate(previousX)} ${formatCoordinate(previousY)}`,
+    ];
+
+    chartPoints.slice(1).forEach((point) => {
+      const x = xForTradeNumber(point.eventIndex + 1);
+      const y = yForPercent(Number(point.odds.get(outcomeId) || 0));
+      const deltaY = y - previousY;
+
+      if (Math.abs(deltaY) < 0.01) {
+        commands.push(`H ${formatCoordinate(x)}`);
+      } else {
+        const radius = Math.min(
+          8,
+          Math.abs(deltaY) / 2,
+          Math.max(x - previousX, 0) / 4,
+        );
+
+        if (radius < 0.1) {
+          commands.push(
+            `H ${formatCoordinate(x)}`,
+            `V ${formatCoordinate(y)}`,
+          );
+        } else {
+          const direction = Math.sign(deltaY);
+          const verticalX = x - radius;
+          commands.push(
+            `H ${formatCoordinate(x - radius * 2)}`,
+            `Q ${formatCoordinate(verticalX)} ${formatCoordinate(previousY)} ${formatCoordinate(verticalX)} ${formatCoordinate(previousY + direction * radius)}`,
+          );
+          if (Math.abs(deltaY) > radius * 2 + 0.01) {
+            commands.push(
+              `V ${formatCoordinate(y - direction * radius)}`,
+            );
+          }
+          commands.push(
+            `Q ${formatCoordinate(verticalX)} ${formatCoordinate(y)} ${formatCoordinate(x)} ${formatCoordinate(y)}`,
+          );
+        }
+      }
+
+      previousX = x;
+      previousY = y;
+    });
+
+    return commands.join(" ");
+  }
+
+  function getHistoryEventCopy(event, market) {
+    const prediction = event.prediction;
+    const profile = state.profiles.find(
+      (item) => item.id === prediction.user_id,
+    );
+    const outcome = market.outcomes.find(
+      (item) => item.id === event.outcomeId,
+    );
+    const name = profile?.display_name || "Unknown trader";
+    const outcomeLabel = outcome?.label || "an outcome";
+    const fromText = formatPercent(event.fromPercent);
+    const toText = formatPercent(event.toPercent);
+    const heldSteady = fromText === toText;
+
+    return {
+      name,
+      outcomeLabel,
+      impactText: heldSteady
+        ? `Community odds held at ${toText}`
+        : `Community odds ${fromText} → ${toText}`,
+      ariaLabel: heldSteady
+        ? `${name} committed ${formatNumber(prediction.amount)} points to ${outcomeLabel}. Community odds held at ${toText}.`
+        : `${name} committed ${formatNumber(prediction.amount)} points to ${outcomeLabel}. Community odds moved from ${fromText} to ${toText}.`,
+    };
+  }
+
+  function renderHistoryEventDetail(event, market) {
+    if (!event) {
+      return `
+        <p class="odds-history-empty">
+          No predictions in this window. The market has maintained its opening position.
+        </p>
+      `;
+    }
+
+    const copy = getHistoryEventCopy(event, market);
+    return `
+      <div class="odds-history-event-copy">
+        <p>
+          <strong>${escapeHtml(copy.name)}</strong> committed
+          <strong>${formatNumber(event.prediction.amount)} pts</strong> to
+          <strong>${escapeHtml(copy.outcomeLabel)}</strong>
+        </p>
+        <span class="odds-history-impact">${escapeHtml(copy.impactText)}</span>
+      </div>
+      <time datetime="${escapeAttribute(event.prediction.created_at)}">${formatRelativeDate(event.prediction.created_at)}</time>
+    `;
+  }
+
+  function renderOddsHistoryChart(market, timeline) {
+    const selectedOutcome =
+      market.outcomes.find(
+        (outcome) => outcome.id === Number(state.oddsHistoryOutcomeId),
+      ) ||
+      [...market.outcomes].sort((a, b) => b.percent - a.percent)[0];
+    const chartOutcomes =
+      market.outcomes.length > 4 && selectedOutcome
+        ? [selectedOutcome]
+        : market.outcomes;
+    const chartPoints = [
+      timeline.points[0],
+      ...timeline.points.filter((point) => point.eventIndex !== null),
+    ];
+    const tradeCount = timeline.events.length;
+    const isScrollable = tradeCount > 8;
+    const viewWidth = isScrollable
+      ? Math.max(760, 64 + tradeCount * 72)
+      : 760;
+    const viewHeight = 244;
+    const plotLeft = 72;
+    const plotRight = 24;
+    const plotTop = 24;
+    const plotBottom = 38;
+    const plotWidth = viewWidth - plotLeft - plotRight;
+    const plotHeight = viewHeight - plotTop - plotBottom;
+    const xForTradeNumber = (tradeNumber) =>
+      plotLeft + (tradeNumber / Math.max(tradeCount, 1)) * plotWidth;
+    const yForPercent = (percent) =>
+      plotTop + ((100 - clamp(percent, 0, 100)) / 100) * plotHeight;
+    const gridLines = [0, 50, 100]
+      .map((percent) => {
+        const y = yForPercent(percent);
+        return `
+          <line class="odds-history-grid-line" x1="${plotLeft}" x2="${viewWidth - plotRight}" y1="${y}" y2="${y}"></line>
+          <text class="odds-history-axis-label" x="${plotLeft - 12}" y="${y}" text-anchor="end" dominant-baseline="middle">${percent}%</text>
+        `;
+      })
+      .join("");
+    const paths = chartOutcomes
+      .map((outcome) => {
+        const color = getHistoryColor(market, outcome.id);
+        const path = buildRoundedStepPath(
+          chartPoints,
+          outcome.id,
+          xForTradeNumber,
+          yForPercent,
+        );
+
+        return `
+          <path
+            class="odds-history-line"
+            d="${path}"
+            style="--history-color:${color}"
+          ></path>
+        `;
+      })
+      .join("");
+    const visibleEvents = timeline.events;
+    const selectedEvent = visibleEvents[visibleEvents.length - 1] || null;
+    const eventDots = visibleEvents
+      .map((event) => {
+        const copy = getHistoryEventCopy(event, market);
+        const focusedOutcomeId =
+          market.outcomes.length > 4 && selectedOutcome
+            ? selectedOutcome.id
+            : event.outcomeId;
+        const eventPercent =
+          market.outcomes.length > 4 && selectedOutcome
+            ? Number(event.afterOdds.get(selectedOutcome.id) || 0)
+            : event.toPercent;
+        const color = getHistoryColor(market, focusedOutcomeId);
+        return `
+          <g
+            class="odds-history-event-target"
+            data-history-event="${event.index}"
+            data-history-trade="${event.index + 1}"
+            data-active="${String(selectedEvent?.index === event.index)}"
+            style="--history-color:${color}"
+            role="button"
+            tabindex="0"
+            aria-label="${escapeAttribute(copy.ariaLabel)}"
+            aria-pressed="${String(selectedEvent?.index === event.index)}"
+          >
+            <circle
+              class="odds-history-event-hit"
+              cx="${xForTradeNumber(event.index + 1).toFixed(2)}"
+              cy="${yForPercent(eventPercent).toFixed(2)}"
+              r="22"
+            ></circle>
+            <circle
+              class="odds-history-event-dot"
+              cx="${xForTradeNumber(event.index + 1).toFixed(2)}"
+              cy="${yForPercent(eventPercent).toFixed(2)}"
+              r="5"
+            ></circle>
+          </g>
+        `;
+      })
+      .join("");
+    const currentOdds = chartPoints[chartPoints.length - 1]?.odds || new Map();
+    const legend =
+      market.outcomes.length > 4
+        ? `
+          <label class="odds-history-outcome-picker" for="history-outcome-select">
+            <span>Outcome shown</span>
+            <select id="history-outcome-select">
+              ${market.outcomes
+                .map(
+                  (outcome) => `
+                    <option
+                      value="${outcome.id}"
+                      ${outcome.id === selectedOutcome?.id ? "selected" : ""}
+                    >
+                      ${escapeHtml(outcome.label)} · ${formatPercent(currentOdds.get(outcome.id))}
+                    </option>
+                  `,
+                )
+                .join("")}
+            </select>
+          </label>
+        `
+        : `
+          <div class="odds-history-legend" aria-label="Chart outcomes">
+            ${market.outcomes
+              .map(
+                (outcome) => `
+                  <span>
+                    <i style="--history-color:${getHistoryColor(market, outcome.id)}" aria-hidden="true"></i>
+                    <span>${escapeHtml(outcome.label)}</span>
+                    <strong>${formatPercent(currentOdds.get(outcome.id))}</strong>
+                  </span>
+                `,
+              )
+              .join("")}
+          </div>
+        `;
+
+    return `
+      <figure class="odds-history" id="odds-history-panel">
+        <div class="odds-history-heading">
+          <div>
+            <p class="eyebrow">Trading record</p>
+            <h3>Odds history</h3>
+          </div>
+        </div>
+        ${legend}
+        <div class="odds-history-chart">
+          <svg
+            class="${isScrollable ? "is-scrollable" : ""}"
+            ${isScrollable ? `style="--history-chart-width:${viewWidth}px"` : ""}
+            viewBox="0 0 ${viewWidth} ${viewHeight}"
+            role="img"
+            aria-labelledby="odds-history-title-${market.id} odds-history-description-${market.id}"
+          >
+            <title id="odds-history-title-${market.id}">Community odds history</title>
+            <desc id="odds-history-description-${market.id}">
+              Soft-step chart showing how community odds changed as predictions were committed.
+            </desc>
+            ${gridLines}
+            ${paths}
+            ${eventDots}
+            <text class="odds-history-axis-label" x="${plotLeft}" y="${viewHeight - 10}" text-anchor="start">Open</text>
+            <text class="odds-history-axis-label" x="${viewWidth - plotRight}" y="${viewHeight - 10}" text-anchor="end">Latest</text>
+          </svg>
+        </div>
+        <div class="odds-history-event" id="odds-history-detail" aria-live="polite">
+          ${renderHistoryEventDetail(selectedEvent, market)}
+        </div>
+        <figcaption>
+          Each step is one prediction. Select a trade to see its timing and odds impact.
+        </figcaption>
+      </figure>
+    `;
+  }
+
+  function renderOutcomeMovement(movement) {
+    const icon =
+      movement.direction === "up" ? "▲" : movement.direction === "down" ? "▼" : "—";
+    if (!movement.hasTrade) {
+      return `
+        <span class="odds-movement movement-flat" aria-label="No trades">
+          <span class="odds-movement-icon" aria-hidden="true">—</span>
+        </span>
+      `;
+    }
+
+    if (movement.direction === "flat") {
+      return `
+        <span class="odds-movement movement-flat" aria-label="No odds change on the latest trade">
+          <span class="odds-movement-icon" aria-hidden="true">—</span>
+        </span>
+      `;
+    }
+
+    const directionText = movement.direction === "up" ? "Up" : "Down";
+    const magnitude = formatMovementMagnitude(movement.delta);
+
+    return `
+      <span
+        class="odds-movement movement-${movement.direction}"
+        aria-label="${directionText} ${magnitude} percentage points on the latest trade"
+      >
+        <span class="odds-movement-icon" aria-hidden="true">${icon}</span>
+        <span aria-hidden="true">${magnitude}</span>
+      </span>
+    `;
+  }
+
+  function renderLiveOddsAnnouncement(liveChanges, market) {
+    if (liveChanges.size === 0) return "";
+    const leadingOutcome = [...market.outcomes].sort(
+      (a, b) => b.percent - a.percent,
+    )[0];
+    return `
+      <p class="visually-hidden" role="status" aria-live="polite">
+        Market odds updated. ${escapeHtml(leadingOutcome.label)} is now ${formatPercent(leadingOutcome.percent)}.
+      </p>
+    `;
   }
 
   function calculateCurrentOutcomePayout(market, outcomeId, userId) {
@@ -986,6 +1527,26 @@
     const userCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortedOutcomes = [...market.outcomes].sort((a, b) => b.percent - a.percent);
     const recentActivity = [...market.predictions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20);
+    const oddsTimeline = buildMarketOddsTimeline(market);
+    const movementByOutcome = getMarketMovementByOutcome(market, oddsTimeline);
+    const historyEventByPrediction = new Map(
+      oddsTimeline.events.map((event) => [event.prediction, event]),
+    );
+    const liveChanges = new Map();
+    market.outcomes.forEach((outcome) => {
+      const previousPercent = state.lastRenderedMarketOdds.get(outcome.id);
+      if (
+        Number.isFinite(previousPercent) &&
+        formatPercent(previousPercent) !== formatPercent(outcome.percent)
+      ) {
+        liveChanges.set(outcome.id, {
+          fromPercent: previousPercent,
+          toPercent: outcome.percent,
+          direction: outcome.percent > previousPercent ? "up" : "down",
+        });
+      }
+    });
+    const isOddsHistoryExpanded = state.oddsHistoryMarketId === market.id;
 
     dom.main.innerHTML = `
       <div class="market-layout">
@@ -1008,12 +1569,38 @@
                 <h2>${market.displayStatus === "resolved" ? "Final results" : "Community odds"}</h2>
                 <p>Display odds include ${market.outcomes[0]?.seed_points || 25} seed points per outcome. Payouts use real predictions only.</p>
               </div>
-              ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
+              <div class="panel-heading-actions">
+                ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
+                ${market.predictions.length ? `
+                  <button
+                    class="odds-history-toggle"
+                    id="toggle-odds-history"
+                    type="button"
+                    aria-expanded="${String(isOddsHistoryExpanded)}"
+                    aria-controls="odds-history-panel"
+                  >
+                    <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
+                    ${isOddsHistoryExpanded ? "Hide odds history" : "View odds history"}
+                  </button>
+                ` : ""}
+              </div>
             </div>
 
+            ${renderLiveOddsAnnouncement(liveChanges, market)}
             <div class="outcome-list">
-              ${sortedOutcomes.map((outcome) => renderOutcomeCard(outcome, market, canPredict)).join("")}
+              ${sortedOutcomes
+                .map((outcome) =>
+                  renderOutcomeCard(
+                    outcome,
+                    market,
+                    canPredict,
+                    movementByOutcome.get(outcome.id),
+                    liveChanges.get(outcome.id),
+                  ),
+                )
+                .join("")}
             </div>
+            ${isOddsHistoryExpanded ? renderOddsHistoryChart(market, oddsTimeline) : ""}
           </section>
 
           <section class="panel">
@@ -1025,7 +1612,15 @@
             </div>
             ${recentActivity.length ? `
               <div class="activity-list">
-                ${recentActivity.map((prediction) => renderActivityItem(prediction, market)).join("")}
+                ${recentActivity
+                  .map((prediction) =>
+                    renderActivityItem(
+                      prediction,
+                      market,
+                      historyEventByPrediction.get(prediction),
+                    ),
+                  )
+                  .join("")}
               </div>
             ` : `
               <div class="empty-state">
@@ -1107,6 +1702,10 @@
       </div>
     `;
 
+    market.outcomes.forEach((outcome) => {
+      state.lastRenderedMarketOdds.set(outcome.id, outcome.percent);
+    });
+
     document.querySelectorAll("[data-predict-outcome]").forEach((button) => {
       button.addEventListener("click", () => openPredictionModal(market, Number(button.dataset.predictOutcome)));
     });
@@ -1121,16 +1720,91 @@
     document.querySelector("#archive-void-market")?.addEventListener("click", () => openArchiveVoidMarketModal(market, true));
     document.querySelector("#restore-void-market")?.addEventListener("click", () => openArchiveVoidMarketModal(market, false));
     document.querySelector("#delete-void-market")?.addEventListener("click", () => openDeleteVoidMarketModal(market));
+    document.querySelector("#toggle-odds-history")?.addEventListener("click", () => {
+      const willExpand = state.oddsHistoryMarketId !== market.id;
+      state.oddsHistoryMarketId = willExpand ? market.id : null;
+      if (willExpand && market.outcomes.length > 4) {
+        state.oddsHistoryOutcomeId =
+          [...market.outcomes].sort((a, b) => b.percent - a.percent)[0]?.id || null;
+      }
+      renderMarketDetail(market.id);
+    });
+    document.querySelector("#history-outcome-select")?.addEventListener("change", (event) => {
+      state.oddsHistoryOutcomeId = Number(event.currentTarget.value);
+      renderMarketDetail(market.id);
+    });
+
+    const historyDots = document.querySelectorAll("[data-history-event]");
+    const initiallyPinnedDot = document.querySelector(
+      '[data-history-event][aria-pressed="true"]',
+    );
+    let pinnedHistoryEventIndex = Number(
+      initiallyPinnedDot?.dataset?.historyEvent,
+    );
+    const activateHistoryEvent = (eventIndex, { pin = false } = {}) => {
+      const historyEvent = oddsTimeline.events.find(
+        (event) => event.index === Number(eventIndex),
+      );
+      const detail = document.querySelector("#odds-history-detail");
+      if (!historyEvent || !detail) return;
+      detail.innerHTML = renderHistoryEventDetail(historyEvent, market);
+      historyDots.forEach((dot) => {
+        const isActive =
+          Number(dot.dataset.historyEvent) === historyEvent.index;
+        dot.setAttribute("data-active", String(isActive));
+        if (pin) {
+          dot.setAttribute("aria-pressed", String(isActive));
+        }
+      });
+      if (pin) pinnedHistoryEventIndex = historyEvent.index;
+    };
+    historyDots.forEach((dot) => {
+      dot.addEventListener("pointerenter", () => {
+        activateHistoryEvent(dot.dataset.historyEvent);
+      });
+      dot.addEventListener("focus", () => {
+        activateHistoryEvent(dot.dataset.historyEvent);
+      });
+      dot.addEventListener("click", () => {
+        activateHistoryEvent(dot.dataset.historyEvent, { pin: true });
+      });
+      dot.addEventListener("keydown", (event) => {
+        if (!["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        activateHistoryEvent(dot.dataset.historyEvent, { pin: true });
+      });
+    });
+    document.querySelector(".odds-history-chart")?.addEventListener(
+      "pointerleave",
+      () => {
+        if (Number.isFinite(pinnedHistoryEventIndex)) {
+          activateHistoryEvent(pinnedHistoryEventIndex);
+        }
+      },
+    );
   }
 
-  function renderOutcomeCard(outcome, market, canPredict) {
+  function renderOutcomeCard(outcome, market, canPredict, movement, liveChange) {
     const isWinner = market.winning_outcome_id === outcome.id;
     const userAmount = market.predictions
       .filter((prediction) => prediction.user_id === state.user.id && prediction.outcome_id === outcome.id)
       .reduce((sum, prediction) => sum + prediction.amount, 0);
+    const outcomeMovement = movement || {
+      currentPercent: outcome.percent,
+      referencePercent: outcome.percent,
+      delta: 0,
+      hasTrade: false,
+      direction: "flat",
+    };
+    const hasLiveChange = Boolean(liveChange);
+    const liveMovementClass =
+      liveChange?.direction === "up" ? " live-moved-up" : "";
+    const oddsStyle = hasLiveChange
+      ? `--odds-from:${clamp(liveChange.fromPercent, 0, 100)}%;--odds-to:${clamp(outcome.percent, 0, 100)}%;width:${clamp(outcome.percent, 0, 100)}%`
+      : `width:${clamp(outcome.percent, 0, 100)}%`;
 
     return `
-      <article class="outcome-card ${isWinner ? "winner" : ""}">
+      <article class="outcome-card ${isWinner ? "winner" : ""}${liveMovementClass}">
         <div class="outcome-card-leading">
           <div class="outcome-name-line">
             <span class="outcome-name">${escapeHtml(outcome.label)}</span>
@@ -1138,11 +1812,12 @@
             ${userAmount ? `<span class="tiny-pill">You: ${formatNumber(userAmount)}</span>` : ""}
           </div>
           <div class="odds-track" aria-hidden="true">
-            <div class="odds-fill" style="width:${clamp(outcome.percent, 0, 100)}%"></div>
+            <div class="odds-fill ${hasLiveChange ? "is-live-updated" : ""}" style="${oddsStyle}"></div>
           </div>
         </div>
         <div class="outcome-numbers">
-          <strong>${formatPercent(outcome.percent)}</strong>
+          <strong class="${hasLiveChange ? "is-live-updated" : ""}">${formatPercent(outcome.percent)}</strong>
+          ${renderOutcomeMovement(outcomeMovement)}
           <small>${formatNumber(outcome.actualPoints)} real pts</small>
         </div>
         ${canPredict ? `
@@ -1156,18 +1831,28 @@
     `;
   }
 
-  function renderActivityItem(prediction, market) {
+  function renderActivityItem(prediction, market, historyEvent) {
     const profile = state.profiles.find((item) => item.id === prediction.user_id);
     const outcome = market.outcomes.find((item) => item.id === prediction.outcome_id);
     const name = profile?.display_name || "Unknown trader";
+    const eventCopy = historyEvent
+      ? getHistoryEventCopy(historyEvent, market)
+      : null;
 
     return `
       <div class="activity-item">
         ${renderProfileAvatar(profile || { display_name: name })}
         <div class="activity-copy">
-          <strong>${escapeHtml(name)}</strong>
-          <span> put ${formatNumber(prediction.amount)} pts on </span>
-          <strong>${escapeHtml(outcome?.label || "an outcome")}</strong>
+          <div class="activity-statement">
+            <strong>${escapeHtml(name)}</strong>
+            <span> committed ${formatNumber(prediction.amount)} pts to </span>
+            <strong>${escapeHtml(outcome?.label || "an outcome")}</strong>
+          </div>
+          ${eventCopy ? `
+            <span class="activity-impact">
+              ${escapeHtml(eventCopy.impactText)}
+            </span>
+          ` : ""}
         </div>
         <time class="activity-time" datetime="${prediction.created_at}">${formatRelativeDate(prediction.created_at)}</time>
       </div>
