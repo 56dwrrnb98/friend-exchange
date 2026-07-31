@@ -19,6 +19,7 @@ create table if not exists public.profiles (
   profile_icon text,
   balance bigint not null default 1000,
   is_admin boolean not null default false,
+  allowance_notice_acknowledged_through date,
   created_at timestamptz not null default now(),
 
   constraint profiles_display_name_length
@@ -64,8 +65,26 @@ create table if not exists public.profiles (
       )
     ),
   constraint profiles_balance_nonnegative
-    check (balance >= 0)
+    check (balance >= 0),
+  constraint profiles_allowance_notice_period_valid
+    check (
+      allowance_notice_acknowledged_through is null
+      or extract(day from allowance_notice_acknowledged_through) = 1
+    )
 );
+
+alter table public.profiles
+  add column if not exists allowance_notice_acknowledged_through date;
+
+alter table public.profiles
+  drop constraint if exists profiles_allowance_notice_period_valid;
+
+alter table public.profiles
+  add constraint profiles_allowance_notice_period_valid
+    check (
+      allowance_notice_acknowledged_through is null
+      or extract(day from allowance_notice_acknowledged_through) = 1
+    );
 
 create table if not exists public.approved_signup_emails (
   email text primary key,
@@ -1453,6 +1472,116 @@ begin
 end;
 $$;
 
+create or replace function public.get_pending_allowance_notice()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_acknowledged_through date;
+  v_available_balance bigint;
+  v_allowance_count bigint := 0;
+  v_points_granted bigint := 0;
+  v_latest_period date;
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select
+    profile.allowance_notice_acknowledged_through,
+    profile.balance
+  into
+    v_acknowledged_through,
+    v_available_balance
+  from public.profiles as profile
+  where profile.id = v_user_id;
+
+  if not found then
+    raise exception 'Profile not found.';
+  end if;
+
+  select
+    count(*)::bigint,
+    coalesce(sum(transaction.amount), 0)::bigint,
+    max(transaction.allowance_period)
+  into
+    v_allowance_count,
+    v_points_granted,
+    v_latest_period
+  from public.point_transactions as transaction
+  where transaction.user_id = v_user_id
+    and transaction.kind = 'monthly_allowance'
+    and (
+      v_acknowledged_through is null
+      or transaction.allowance_period > v_acknowledged_through
+    );
+
+  if v_allowance_count = 0 then
+    return null;
+  end if;
+
+  return jsonb_build_object(
+    'allowance_count', v_allowance_count,
+    'points_granted', v_points_granted,
+    'latest_period', v_latest_period,
+    'available_balance', v_available_balance
+  );
+end;
+$$;
+
+create or replace function public.acknowledge_monthly_allowances(
+  p_through_period date
+)
+returns date
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_latest_period date;
+  v_acknowledged_through date;
+begin
+  if v_user_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  if p_through_period is null
+     or extract(day from p_through_period) <> 1 then
+    raise exception 'Allowance period must be the first day of a month.';
+  end if;
+
+  select max(transaction.allowance_period)
+  into v_latest_period
+  from public.point_transactions as transaction
+  where transaction.user_id = v_user_id
+    and transaction.kind = 'monthly_allowance'
+    and transaction.allowance_period <= p_through_period;
+
+  if v_latest_period is null then
+    raise exception 'No monthly allowance exists through that period.';
+  end if;
+
+  update public.profiles as profile
+  set allowance_notice_acknowledged_through = greatest(
+    coalesce(profile.allowance_notice_acknowledged_through, v_latest_period),
+    v_latest_period
+  )
+  where profile.id = v_user_id
+  returning profile.allowance_notice_acknowledged_through
+  into v_acknowledged_through;
+
+  if not found then
+    raise exception 'Profile not found.';
+  end if;
+
+  return v_acknowledged_through;
+end;
+$$;
+
 -- ----------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- Users may read community data. All writes go through the functions
@@ -1571,6 +1700,8 @@ revoke all on function public.add_approved_signup_email(text)
 revoke all on function public.remove_approved_signup_email(text)
   from public, anon;
 revoke all on function public.grant_monthly_allowance(date) from public, anon, authenticated;
+revoke all on function public.get_pending_allowance_notice() from public, anon;
+revoke all on function public.acknowledge_monthly_allowances(date) from public, anon;
 
 grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.update_profile(text, text) to authenticated;
@@ -1589,6 +1720,10 @@ grant execute on function public.list_approved_signup_emails()
 grant execute on function public.add_approved_signup_email(text)
   to authenticated;
 grant execute on function public.remove_approved_signup_email(text)
+  to authenticated;
+grant execute on function public.get_pending_allowance_notice()
+  to authenticated;
+grant execute on function public.acknowledge_monthly_allowances(date)
   to authenticated;
 
 commit;

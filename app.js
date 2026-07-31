@@ -98,6 +98,13 @@
     loading: false,
     realtimeChannel: null,
     realtimeTimer: null,
+    allowanceNoticeChannel: null,
+    allowanceNoticeSuppressedThrough: null,
+    allowanceNoticeChecking: false,
+    allowanceNoticeUnavailable: false,
+    allowanceNoticeOpen: false,
+    allowanceNoticeCurrent: null,
+    pendingAllowanceNotice: null,
     authSubscription: null,
     passwordRecovery: false,
   };
@@ -423,7 +430,15 @@
     if (state.realtimeChannel && state.client) {
       state.client.removeChannel(state.realtimeChannel);
     }
+    state.allowanceNoticeChannel?.close();
     state.realtimeChannel = null;
+    state.allowanceNoticeChannel = null;
+    state.allowanceNoticeSuppressedThrough = null;
+    state.allowanceNoticeChecking = false;
+    state.allowanceNoticeUnavailable = false;
+    state.allowanceNoticeOpen = false;
+    state.allowanceNoticeCurrent = null;
+    state.pendingAllowanceNotice = null;
     state.user = null;
     state.profile = null;
     state.profiles = [];
@@ -439,6 +454,7 @@
     state.oddsHistoryOutcomeId = null;
     state.lastRenderedMarketOdds = new Map();
     state.loading = false;
+    closeModal({ acknowledgeAllowance: false });
   }
 
   async function enterApp() {
@@ -451,6 +467,7 @@
       window.location.hash = "#/markets";
     }
 
+    setupAllowanceNoticeChannel();
     renderLoading();
     await refreshData();
     subscribeToChanges();
@@ -502,6 +519,7 @@
 
     updateHeader();
     renderRoute();
+    void checkPendingAllowanceNotice();
   }
 
   function subscribeToChanges() {
@@ -528,6 +546,155 @@
     dom.adminNavLink.classList.toggle("hidden", !isAdmin);
     dom.adminMobileNavLink.classList.toggle("hidden", !isAdmin);
     dom.mobileNav.classList.toggle("admin-visible", isAdmin);
+  }
+
+  function setupAllowanceNoticeChannel() {
+    state.allowanceNoticeChannel?.close();
+    state.allowanceNoticeChannel = null;
+
+    if (typeof window.BroadcastChannel !== "function") return;
+
+    const channel = new window.BroadcastChannel("friend-exchange-allowance-notices");
+    channel.addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.userId !== state.user?.id || !message.throughPeriod) return;
+
+      if (message.type === "shown") {
+        suppressAllowanceNoticeThrough(message.throughPeriod);
+        if (!state.allowanceNoticeOpen) state.pendingAllowanceNotice = null;
+        return;
+      }
+
+      if (message.type === "acknowledged") {
+        suppressAllowanceNoticeThrough(message.throughPeriod);
+        state.pendingAllowanceNotice = null;
+        if (state.allowanceNoticeOpen) {
+          closeModal({ acknowledgeAllowance: false });
+        }
+      }
+    });
+    state.allowanceNoticeChannel = channel;
+  }
+
+  function broadcastAllowanceNotice(type, throughPeriod) {
+    state.allowanceNoticeChannel?.postMessage({
+      type,
+      throughPeriod,
+      userId: state.user?.id,
+    });
+  }
+
+  function isAllowanceNoticeSuppressed(throughPeriod) {
+    return Boolean(
+      state.allowanceNoticeSuppressedThrough &&
+      state.allowanceNoticeSuppressedThrough >= throughPeriod
+    );
+  }
+
+  function suppressAllowanceNoticeThrough(throughPeriod) {
+    if (
+      !state.allowanceNoticeSuppressedThrough ||
+      throughPeriod > state.allowanceNoticeSuppressedThrough
+    ) {
+      state.allowanceNoticeSuppressedThrough = throughPeriod;
+    }
+  }
+
+  async function checkPendingAllowanceNotice() {
+    if (
+      !state.client ||
+      !state.user ||
+      !state.profile ||
+      state.allowanceNoticeChecking ||
+      state.allowanceNoticeUnavailable
+    ) {
+      return;
+    }
+
+    state.allowanceNoticeChecking = true;
+    const { data, error } = await state.client.rpc("get_pending_allowance_notice");
+    state.allowanceNoticeChecking = false;
+
+    if (error) {
+      const message = String(error.message || "").toLowerCase();
+      if (error.code === "PGRST202" || message.includes("get_pending_allowance_notice")) {
+        state.allowanceNoticeUnavailable = true;
+      }
+      console.warn("Could not check monthly allowance notifications.", error);
+      return;
+    }
+
+    if (!data?.latest_period) {
+      state.pendingAllowanceNotice = null;
+      if (state.allowanceNoticeOpen) {
+        closeModal({ acknowledgeAllowance: false });
+      }
+      return;
+    }
+
+    if (isAllowanceNoticeSuppressed(data.latest_period)) return;
+
+    state.pendingAllowanceNotice = {
+      allowanceCount: Number(data.allowance_count) || 0,
+      pointsGranted: Number(data.points_granted) || 0,
+      latestPeriod: String(data.latest_period),
+      availableBalance: Number(data.available_balance) || 0,
+    };
+    showPendingAllowanceNotice();
+  }
+
+  function showPendingAllowanceNotice() {
+    const notice = state.pendingAllowanceNotice;
+    if (!notice || state.allowanceNoticeOpen || dom.modalRoot.firstElementChild) return;
+    if (isAllowanceNoticeSuppressed(notice.latestPeriod)) {
+      state.pendingAllowanceNotice = null;
+      return;
+    }
+
+    state.pendingAllowanceNotice = null;
+    state.allowanceNoticeOpen = true;
+    state.allowanceNoticeCurrent = notice;
+    openModal(renderAllowanceNoticeContent(notice), "allowance-notice-modal");
+    broadcastAllowanceNotice("shown", notice.latestPeriod);
+    document.querySelector("#allowance-notice-dismiss")?.focus();
+  }
+
+  function renderAllowanceNoticeContent(notice) {
+    const allowanceCount = Number(notice.allowanceCount) || 0;
+    const pointsGranted = Number(notice.pointsGranted) || 0;
+    const availableBalance = Number(notice.availableBalance) || 0;
+    const body = allowanceCount > 1
+      ? `While you were away, the Exchange issued ${formatNumber(pointsGranted)} points in monthly allowances. Your available balance is now ${formatNumber(availableBalance)} points.`
+      : `Your continued market participation has earned you a ${formatNumber(pointsGranted)}-point monthly allowance. Your available balance is now ${formatNumber(availableBalance)} points.`;
+
+    return `
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Monthly allowance</p>
+          <h2>Wake up, it’s the first of the month!</h2>
+          <p>${body}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-primary" id="allowance-notice-dismiss" data-modal-close type="button">Return to reckless speculation</button>
+      </div>
+    `;
+  }
+
+  async function acknowledgeAllowanceNotice(notice) {
+    if (!notice?.latestPeriod || !state.client) return;
+
+    const { error } = await state.client.rpc("acknowledge_monthly_allowances", {
+      p_through_period: notice.latestPeriod,
+    });
+
+    if (error) {
+      console.warn("Could not acknowledge the monthly allowance notification.", error);
+      return;
+    }
+
+    broadcastAllowanceNotice("acknowledged", notice.latestPeriod);
   }
 
   function renderLoading() {
@@ -3618,9 +3785,24 @@
     document.body.classList.add("modal-open");
   }
 
-  function closeModal() {
+  function closeModal({ acknowledgeAllowance = true } = {}) {
+    const allowanceNotice = state.allowanceNoticeOpen
+      ? state.allowanceNoticeCurrent
+      : null;
+    state.allowanceNoticeOpen = false;
+    state.allowanceNoticeCurrent = null;
     dom.modalRoot.innerHTML = "";
     document.body.classList.remove("modal-open");
+
+    if (allowanceNotice) {
+      suppressAllowanceNoticeThrough(allowanceNotice.latestPeriod);
+      if (acknowledgeAllowance) void acknowledgeAllowanceNotice(allowanceNotice);
+      return;
+    }
+
+    if (state.pendingAllowanceNotice) {
+      window.setTimeout(showPendingAllowanceNotice, 0);
+    }
   }
 
   function statusPill(status) {

@@ -22,6 +22,8 @@ There is no build step, package manager, framework, or custom server.
 - Password recovery and persistent accounts across devices
 - 1,000 starting points for each member
 - A monthly allowance for recently active members
+- Immediate or next-launch monthly allowance announcements, with accumulated
+  awards combined into one notice
 - Markets with 2–10 outcomes, including simple Yes/No questions
 - Community odds based on the points committed to each outcome
 - Per-outcome latest-trade movement and expandable soft-step odds history
@@ -91,6 +93,11 @@ The SQL file creates the tables, indexes, security policies, profile automation,
 payout logic, database functions, monthly allowance schedule, and real-time
 publication configuration. Run the complete file once on a new Supabase
 project.
+
+For an existing database, apply the files in `migrations/` in chronological
+order. After the monthly allowance migration, run
+`migrations/20260731_allowance_notifications.sql` before deploying the matching
+front end.
 
 ## 2. Configure email authentication
 
@@ -275,6 +282,7 @@ friend-exchange/
 ├── config.js          Your public Supabase configuration and app name
 ├── config.example.js  Placeholder configuration template
 ├── database.sql       Complete database setup for a new project
+├── migrations/        Ordered changes for an existing database
 ├── tests/
 │   └── phase1.test.js Local front-end and calculation checks
 └── README.md          Setup, architecture, and usage instructions
@@ -300,7 +308,9 @@ password recovery. The browser never receives or stores readable passwords.
 
 The database creates a public profile for each confirmed member and grants the
 starting balance. A scheduled database job grants the monthly allowance to
-members whose latest sign-in was within the preceding 90 days.
+members whose latest sign-in was within the preceding 90 days. Open browsers
+announce the award after the real-time balance refresh; browsers that were
+closed or offline announce unseen allowances on the next launch.
 
 The browser may read the exchange information needed for markets, activity,
 leaderboards, and portfolios. It cannot directly change balances, insert
@@ -321,7 +331,8 @@ The Friend Exchange is designed for a small, trusted community.
 - Signup confirmation and password recovery depend on correctly configured
   SMTP and redirect URLs.
 - Display names are not required to be unique.
-- There are no comments, notifications, images, market categories, or search.
+- There are no comments, general-purpose notifications, images, market
+  categories, or search.
 - The application loads the complete small-community dataset at once. A large
   public deployment would require pagination and more selective queries.
 - Modals do not currently trap keyboard focus or restore focus when closed.
