@@ -90,6 +90,8 @@
     payouts: [],
     marketFilter: "active",
     portfolioFilter: "all",
+    portfolioSortKey: "default",
+    portfolioSortDirection: "desc",
     leaderboardSortKey: "profitLoss",
     leaderboardSortDirection: "desc",
     oddsHistoryMarketId: null,
@@ -210,6 +212,7 @@
     dom.backToLoginButton.addEventListener("click", () => setAuthMode("login"));
     dom.confirmationBackToLogin.addEventListener("click", () => setAuthMode("login"));
     window.addEventListener("hashchange", renderRoute);
+    window.addEventListener("resize", updateScrollableTableFades);
 
     dom.balanceButton.addEventListener("click", () => {
       openAccountModal();
@@ -448,6 +451,8 @@
     state.payouts = [];
     state.marketFilter = "active";
     state.portfolioFilter = "all";
+    state.portfolioSortKey = "default";
+    state.portfolioSortDirection = "desc";
     state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
     state.oddsHistoryMarketId = null;
@@ -2198,6 +2203,31 @@
     });
   }
 
+  function updateScrollableTableFades() {
+    document.querySelectorAll("[data-scrollable-table]").forEach((card) => {
+      const scroller = card.querySelector(".table-scroll");
+      if (!scroller) return;
+
+      const maximumScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      card.classList.toggle("has-left-overflow", scroller.scrollLeft > 1);
+      card.classList.toggle(
+        "has-right-overflow",
+        maximumScroll > 1 && scroller.scrollLeft < maximumScroll - 1,
+      );
+    });
+  }
+
+  function setupScrollableTableFades() {
+    document.querySelectorAll("[data-scrollable-table]").forEach((card) => {
+      const scroller = card.querySelector(".table-scroll");
+      if (!scroller) return;
+      scroller.addEventListener("scroll", updateScrollableTableFades, { passive: true });
+    });
+
+    updateScrollableTableFades();
+    window.setTimeout(updateScrollableTableFades, 0);
+  }
+
   function renderLeaderboard() {
     const allMarkets = getAllMarkets();
     const resolvedMarketIds = new Set(
@@ -2385,7 +2415,7 @@
         </div>
       </div>
 
-      <section class="table-card">
+      <section class="table-card" data-scrollable-table>
         <div class="table-scroll">
           <table class="data-table">
             <thead>
@@ -2465,6 +2495,8 @@
         renderLeaderboard();
       });
     });
+
+    setupScrollableTableFades();
   }
 
   function renderPortfolio() {
@@ -2524,6 +2556,7 @@
       .map((position) => ({
         ...position,
         category: getPositionCategory(position),
+        ...getPositionTableValues(position),
       }))
       .sort((a, b) => {
         const activePriority = Number(b.category === "active") - Number(a.category === "active");
@@ -2540,6 +2573,25 @@
     const filteredPositions = state.portfolioFilter === "all"
       ? positions
       : positions.filter((position) => position.category === state.portfolioFilter);
+    const sortedPositions = sortPortfolioPositions(filteredPositions);
+    const sortableHeader = (key, label, title = "", className = "") => {
+      const isActive = state.portfolioSortKey === key;
+      const ariaSort = isActive
+        ? state.portfolioSortDirection === "asc" ? "ascending" : "descending"
+        : "none";
+      const indicator = isActive
+        ? state.portfolioSortDirection === "asc" ? "↑" : "↓"
+        : "↕";
+
+      return `
+        <th class="${className}" aria-sort="${ariaSort}"${title ? ` title="${escapeAttribute(title)}"` : ""}>
+          <button class="table-sort-button" type="button" data-portfolio-sort="${key}">
+            <span>${label}</span>
+            <span class="sort-indicator" aria-hidden="true">${indicator}</span>
+          </button>
+        </th>
+      `;
+    };
 
     dom.main.innerHTML = `
       <div class="page-header">
@@ -2550,13 +2602,13 @@
         </div>
       </div>
 
-      <div class="portfolio-grid">
+      <div class="portfolio-grid portfolio-summary">
         <div class="portfolio-stat">
           <span>Current balance</span>
           <strong>${formatNumber(state.profile.balance)} pts</strong>
         </div>
         <div class="portfolio-stat">
-          <span>Points currently committed</span>
+          <span>Currently committed</span>
           <strong>${formatNumber(currentlyCommitted)} pts</strong>
         </div>
         <div class="portfolio-stat">
@@ -2587,11 +2639,30 @@
         ${portfolioFilterButton("refunded", "Refunded", positionCounts.refunded)}
       </div>
 
-      <section class="position-list">
-        ${filteredPositions.length
-          ? filteredPositions.map(renderPositionCard).join("")
-          : renderNoPortfolioPositions(state.portfolioFilter, positions.length > 0)}
-      </section>
+      ${sortedPositions.length
+        ? `
+          <section class="table-card" data-scrollable-table>
+            <div class="table-scroll">
+              <table class="data-table portfolio-table">
+                <thead>
+                  <tr>
+                    ${sortableHeader("market", "Market", "Prediction market question.", "portfolio-market-column")}
+                    ${sortableHeader("outcome", "Your pick")}
+                    ${sortableHeader("odds", "Odds", "Current community odds for open markets; final community odds after trading closes.", "numeric-column")}
+                    ${sortableHeader("status", "Status")}
+                    ${sortableHeader("committed", "Committed", "Total points committed to this outcome.", "numeric-column")}
+                    ${sortableHeader("returned", "Returned", "Gross points credited at settlement. Refunds return the committed amount; losses return zero.", "numeric-column")}
+                    ${sortableHeader("profitLoss", "P/L", "Returned points minus committed points. Unresolved positions are excluded.", "numeric-column")}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sortedPositions.map(renderPositionCard).join("")}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `
+        : renderNoPortfolioPositions(state.portfolioFilter, positions.length > 0)}
     `;
 
     document.querySelectorAll("[data-portfolio-filter]").forEach((button) => {
@@ -2600,6 +2671,24 @@
         renderPortfolio();
       });
     });
+
+    document.querySelectorAll("[data-portfolio-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextKey = button.dataset.portfolioSort;
+        if (state.portfolioSortKey === nextKey) {
+          state.portfolioSortDirection =
+            state.portfolioSortDirection === "desc" ? "asc" : "desc";
+        } else {
+          state.portfolioSortKey = nextKey;
+          state.portfolioSortDirection = ["market", "outcome", "status"].includes(nextKey)
+            ? "asc"
+            : "desc";
+        }
+        renderPortfolio();
+      });
+    });
+
+    setupScrollableTableFades();
   }
 
   function getPositionCategory(position) {
@@ -2627,6 +2716,101 @@
         ${label} · ${count}
       </button>
     `;
+  }
+
+  function getPositionTableValues(position) {
+    const { market, outcome, amount, payout } = position;
+    const isResolved = market.displayStatus === "resolved";
+    const isWinner = market.winning_outcome_id === outcome.id;
+    const isVoid = market.displayStatus === "void";
+    const isNoWinnerRefund = isResolved && payout?.kind === "no_winner_refund";
+
+    let statusLabel = "Open";
+    let statusTone = "is-open";
+    let statusOrder = 0;
+    let returned = null;
+    let positionProfitLoss = null;
+
+    if (market.displayStatus === "closed") {
+      statusLabel = "Awaiting result";
+      statusTone = "is-awaiting";
+      statusOrder = 1;
+    }
+    if (isVoid) {
+      statusLabel = market.archived_at ? "Voided · Archived" : "Voided";
+      statusTone = "is-refunded";
+      statusOrder = 5;
+      returned = amount;
+      positionProfitLoss = 0;
+    }
+    if (isNoWinnerRefund) {
+      statusLabel = "Refunded";
+      statusTone = "is-refunded";
+      statusOrder = 4;
+      returned = amount;
+      positionProfitLoss = 0;
+    }
+    if (isResolved && isWinner && !isNoWinnerRefund) {
+      statusLabel = "Won";
+      statusTone = "is-won";
+      statusOrder = 2;
+      returned = payout?.amount || 0;
+      positionProfitLoss = returned - amount;
+    }
+    if (isResolved && !isWinner && !isNoWinnerRefund) {
+      statusLabel = "Lost";
+      statusTone = "is-lost";
+      statusOrder = 3;
+      returned = 0;
+      positionProfitLoss = -amount;
+    }
+
+    return {
+      oddsContext: market.displayStatus === "open" ? "current" : "final",
+      positionProfitLoss,
+      returned,
+      statusLabel,
+      statusOrder,
+      statusTone,
+    };
+  }
+
+  function sortPortfolioPositions(positions) {
+    if (state.portfolioSortKey === "default") return positions;
+
+    const getSortValue = (position) => {
+      switch (state.portfolioSortKey) {
+        case "market": return position.market.question;
+        case "outcome": return position.outcome.label;
+        case "odds": return position.outcome.percent;
+        case "status": return position.statusOrder;
+        case "committed": return position.amount;
+        case "returned": return position.returned;
+        case "profitLoss": return position.positionProfitLoss;
+        default: return 0;
+      }
+    };
+
+    return [...positions].sort((a, b) => {
+      const aValue = getSortValue(a);
+      const bValue = getSortValue(b);
+
+      // Unsettled positions have no returned or P/L value. Keep them below
+      // settled values regardless of the selected direction.
+      if (aValue === null && bValue !== null) return 1;
+      if (aValue !== null && bValue === null) return -1;
+
+      const comparison = typeof aValue === "string"
+        ? aValue.localeCompare(bValue)
+        : (aValue ?? 0) - (bValue ?? 0);
+      if (comparison !== 0) {
+        return state.portfolioSortDirection === "asc" ? comparison : -comparison;
+      }
+
+      const latestDifference = new Date(b.latest) - new Date(a.latest);
+      if (latestDifference !== 0) return latestDifference;
+      return a.market.question.localeCompare(b.market.question);
+    });
   }
 
   function renderNoPortfolioPositions(filter, hasAnyPositions) {
@@ -2657,54 +2841,46 @@
   }
 
   function renderPositionCard(position) {
-    const { market, outcome, amount, payout } = position;
-    const isResolved = market.displayStatus === "resolved";
-    const isWinner = market.winning_outcome_id === outcome.id;
-    const isVoid = market.displayStatus === "void";
-    const isNoWinnerRefund =
-      isResolved && payout?.kind === "no_winner_refund";
-
-    let resultLabel = "Open";
-    let valueLabel = `${formatNumber(amount)} pts committed`;
-    let resultClass = "";
-
-    if (market.displayStatus === "closed") resultLabel = "Awaiting result";
-    if (isVoid) {
-      resultLabel = market.archived_at ? "Voided · Archived" : "Voided";
-      valueLabel = `${formatNumber(amount)} pts refunded`;
-    }
-    if (isNoWinnerRefund) {
-      resultLabel = "Refunded";
-      resultClass = "text-success";
-      valueLabel = `${formatNumber(amount)} pts refunded`;
-    }
-    if (isResolved && isWinner && !isNoWinnerRefund) {
-      resultLabel = "Won";
-      resultClass = "text-success";
-      valueLabel = `${formatNumber(payout?.amount || 0)} pts paid`;
-    }
-    if (isResolved && !isWinner && !isNoWinnerRefund) {
-      resultLabel = "Lost";
-      resultClass = "text-danger";
-      valueLabel = `${formatNumber(amount)} pts committed`;
-    }
+    const tableValues = position.statusLabel
+      ? position
+      : { ...position, ...getPositionTableValues(position) };
+    const {
+      market,
+      outcome,
+      amount,
+      oddsContext,
+      positionProfitLoss,
+      returned,
+      statusLabel,
+      statusTone,
+    } = tableValues;
+    const profitLossClass = positionProfitLoss > 0
+      ? "text-success"
+      : positionProfitLoss < 0
+        ? "text-danger"
+        : "";
+    const returnedText = returned === null ? "—" : `${formatNumber(returned)} pts`;
+    const profitLossText = positionProfitLoss === null
+      ? "—"
+      : `${positionProfitLoss > 0 ? "+" : ""}${formatNumber(positionProfitLoss)} pts`;
 
     return `
-      <article class="position-card">
-        <div>
-          <h2><a href="#/market/${market.id}">${escapeHtml(market.question)}</a></h2>
-          <div class="position-meta">
-            <span>Outcome: <strong>${escapeHtml(outcome.label)}</strong></span>
-            <span>Current odds: <strong>${formatPercent(outcome.percent)}</strong></span>
-            <span>Status: <strong class="${resultClass}">${resultLabel}</strong></span>
-            ${market.archived_at ? "<span>Preserved in your archived history</span>" : ""}
-          </div>
-        </div>
-        <div class="position-value">
-          <strong>${formatNumber(amount)} pts</strong>
-          <span>${valueLabel}</span>
-        </div>
-      </article>
+      <tr>
+        <td class="portfolio-question-cell">
+          <a class="portfolio-question-link" href="#/market/${market.id}">${escapeHtml(market.question)}</a>
+        </td>
+        <td class="portfolio-outcome-cell"><strong>${escapeHtml(outcome.label)}</strong></td>
+        <td class="numeric-cell">
+          <span class="table-value-with-note">
+            <strong>${formatPercent(outcome.percent)}</strong>
+            <small>${oddsContext}</small>
+          </span>
+        </td>
+        <td><span class="position-status ${statusTone}">${statusLabel}</span></td>
+        <td class="mono numeric-cell">${formatNumber(amount)} pts</td>
+        <td class="mono numeric-cell">${returnedText}</td>
+        <td class="mono numeric-cell ${profitLossClass}">${profitLossText}</td>
+      </tr>
     `;
   }
 

@@ -1834,6 +1834,38 @@ textarea::placeholder {
   background: var(--paper-strong);
 }
 
+.table-card[data-scrollable-table] {
+  position: relative;
+}
+
+.table-card[data-scrollable-table]::before,
+.table-card[data-scrollable-table]::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 30px;
+  opacity: 0;
+  pointer-events: none;
+  content: "";
+  transition: opacity 160ms ease;
+}
+
+.table-card[data-scrollable-table]::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(16, 27, 24, 0.11), transparent);
+}
+
+.table-card[data-scrollable-table]::after {
+  right: 0;
+  background: linear-gradient(90deg, transparent, rgba(16, 27, 24, 0.11));
+}
+
+.table-card[data-scrollable-table].has-left-overflow::before,
+.table-card[data-scrollable-table].has-right-overflow::after {
+  opacity: 1;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
@@ -2027,57 +2059,97 @@ textarea::placeholder {
   font-weight: 500;
 }
 
-.position-list {
-  display: grid;
-  gap: 12px;
+.portfolio-table {
+  min-width: 980px;
 }
 
-.position-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 20px;
-  align-items: center;
-  padding: 20px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--paper-strong);
+.portfolio-table .portfolio-market-column,
+.portfolio-table .portfolio-question-cell {
+  width: 36%;
+  min-width: 300px;
 }
 
-.position-card h2 {
-  margin: 0 0 8px;
-  font-size: 1rem;
+.portfolio-table .portfolio-question-cell,
+.portfolio-table .portfolio-outcome-cell {
+  line-height: 1.35;
+  white-space: normal;
 }
 
-.position-card h2 a {
+.portfolio-table .portfolio-outcome-cell {
+  min-width: 140px;
+}
+
+.portfolio-question-link {
+  display: block;
+  font-weight: 800;
   text-decoration: none;
 }
 
-.position-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  color: var(--muted);
-  font-size: 0.72rem;
+.portfolio-question-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.position-value {
-  min-width: 100px;
+.portfolio-table .numeric-column,
+.portfolio-table .numeric-cell {
   text-align: right;
 }
 
-.position-value strong,
-.position-value span {
-  display: block;
+.portfolio-table .numeric-column .table-sort-button {
+  width: 100%;
+  justify-content: flex-end;
 }
 
-.position-value strong {
+.table-value-with-note {
+  display: inline-flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 2px;
   font-family: var(--font-mono);
-  font-size: 1.1rem;
+  line-height: 1.1;
 }
 
-.position-value span {
+.table-value-with-note small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-family: var(--font-sans);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.position-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e7e5dc;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.position-status.is-open {
+  background: var(--mint-soft);
+  color: var(--ink);
+}
+
+.position-status.is-won {
+  background: var(--success);
+  color: var(--paper-strong);
+}
+
+.position-status.is-lost {
+  background: var(--coral-soft);
+  color: var(--danger);
+}
+
+.position-status.is-refunded,
+.position-status.is-awaiting {
+  background: #e7e5dc;
+  color: var(--muted);
 }
 
 .modal-backdrop {
@@ -2632,6 +2704,22 @@ textarea::placeholder {
     grid-template-columns: 1fr;
   }
 
+  .portfolio-grid.portfolio-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portfolio-summary .portfolio-stat {
+    padding: 16px;
+  }
+
+  .portfolio-summary .portfolio-stat span {
+    min-height: 2.4em;
+  }
+
+  .portfolio-summary .portfolio-stat strong {
+    font-size: clamp(1.05rem, 5vw, 1.35rem);
+  }
+
   .portfolio-grid.leaderboard-stats {
     grid-template-columns: 1fr;
   }
@@ -2677,14 +2765,6 @@ textarea::placeholder {
   .form-footer {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .position-card {
-    grid-template-columns: 1fr;
-  }
-
-  .position-value {
-    text-align: left;
   }
 
   .modal-backdrop {
