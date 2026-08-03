@@ -2844,6 +2844,10 @@ textarea::placeholder {
     border-bottom: 1px solid var(--line);
   }
 
+  .portfolio-table tbody tr:last-child .portfolio-question-cell {
+    border-bottom: 1px solid var(--line);
+  }
+
   .portfolio-question-heading {
     display: flex;
     align-items: flex-start;
