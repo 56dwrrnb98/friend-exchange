@@ -2739,9 +2739,23 @@ textarea::placeholder {
   }
 
   .portfolio-mobile-sort-field {
+    position: relative;
     display: grid;
     flex: 1;
     gap: 5px;
+  }
+
+  .portfolio-mobile-sort-field::after {
+    position: absolute;
+    right: 16px;
+    bottom: 19px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
+    content: "";
+    pointer-events: none;
+    transform: rotate(45deg);
   }
 
   .portfolio-mobile-sort-field > span {
@@ -2755,7 +2769,8 @@ textarea::placeholder {
 
   .portfolio-mobile-sort-field select,
   .portfolio-sort-direction {
-    min-height: 42px;
+    height: 48px;
+    min-height: 48px;
     border: 1px solid var(--line-strong);
     border-radius: 10px;
     background-color: var(--paper-strong);
@@ -2764,15 +2779,18 @@ textarea::placeholder {
 
   .portfolio-mobile-sort-field select {
     width: 100%;
-    padding: 0 36px 0 12px;
-    font-size: 0.78rem;
+    padding: 0 42px 0 12px;
+    -webkit-appearance: none;
+    appearance: none;
+    font-size: 1rem;
     font-weight: 800;
+    line-height: 1.2;
   }
 
   .portfolio-sort-direction {
-    width: 42px;
+    width: 48px;
     display: grid;
-    flex: 0 0 42px;
+    flex: 0 0 48px;
     place-items: center;
     cursor: pointer;
     font-family: var(--font-mono);
