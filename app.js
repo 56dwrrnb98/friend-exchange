@@ -53,6 +53,40 @@
     "#9a6a00",
     "#596d80",
   ]);
+  const ORDINAL_DAY_WORDS = Object.freeze([
+    "",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "ninth",
+    "tenth",
+    "eleventh",
+    "twelfth",
+    "thirteenth",
+    "fourteenth",
+    "fifteenth",
+    "sixteenth",
+    "seventeenth",
+    "eighteenth",
+    "nineteenth",
+    "twentieth",
+    "twenty-first",
+    "twenty-second",
+    "twenty-third",
+    "twenty-fourth",
+    "twenty-fifth",
+    "twenty-sixth",
+    "twenty-seventh",
+    "twenty-eighth",
+    "twenty-ninth",
+    "thirtieth",
+    "thirty-first",
+  ]);
   const dom = {
     app: document.querySelector("#app"),
     main: document.querySelector("#main-content"),
@@ -664,10 +698,18 @@
     document.querySelector("#allowance-notice-dismiss")?.focus();
   }
 
-  function renderAllowanceNoticeContent(notice) {
+  function renderAllowanceNoticeContent(notice, dayOfMonth = new Date().getDate()) {
     const allowanceCount = Number(notice.allowanceCount) || 0;
     const pointsGranted = Number(notice.pointsGranted) || 0;
     const availableBalance = Number(notice.availableBalance) || 0;
+    const normalizedDay = Number.isInteger(dayOfMonth) && dayOfMonth >= 1 && dayOfMonth <= 31
+      ? dayOfMonth
+      : 1;
+    const ordinalDay = ORDINAL_DAY_WORDS[normalizedDay];
+    const headingText = `Wake up, it’s the ${ordinalDay} of the month!`;
+    const headingMarkup = normalizedDay === 1
+      ? headingText
+      : `Wake up, it’s the <s class="allowance-original-day" aria-hidden="true">first</s> ${ordinalDay} of the month!`;
     const body = allowanceCount > 1
       ? `While you were away, the Exchange issued ${formatNumber(pointsGranted)} points in monthly allowances. Your available balance is now ${formatNumber(availableBalance)} points.`
       : `Your continued market participation has earned you a ${formatNumber(pointsGranted)}-point monthly allowance. Your available balance is now ${formatNumber(availableBalance)} points.`;
@@ -676,7 +718,7 @@
       <div class="modal-header">
         <div>
           <p class="eyebrow">Monthly allowance</p>
-          <h2>Wake up, it’s the first of the month!</h2>
+          <h2 aria-label="${headingText}">${headingMarkup}</h2>
           <p>${body}</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>

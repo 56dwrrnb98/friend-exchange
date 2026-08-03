@@ -2240,6 +2240,11 @@ textarea::placeholder {
   letter-spacing: -0.035em;
 }
 
+.allowance-original-day {
+  text-decoration-color: var(--coral);
+  text-decoration-thickness: 0.1em;
+}
+
 .modal-header p {
   margin: 5px 0 0;
   color: var(--muted);
