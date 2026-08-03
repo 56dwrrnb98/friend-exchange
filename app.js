@@ -247,6 +247,7 @@
     dom.confirmationBackToLogin.addEventListener("click", () => setAuthMode("login"));
     window.addEventListener("hashchange", renderRoute);
     window.addEventListener("resize", updateScrollableTableFades);
+    window.addEventListener("resize", updateScrollableFilterRows);
 
     dom.balanceButton.addEventListener("click", () => {
       openAccountModal();
@@ -1617,10 +1618,10 @@
       </div>
 
       <div class="filter-row" role="group" aria-label="Filter markets">
+        ${filterButton("all", "All", markets.length)}
         ${filterButton("active", "Active", activeMarkets.length)}
         ${filterButton("resolved", "Resolved", resolvedMarkets.length)}
         ${filterButton("void", "Voided", voidedMarkets.length)}
-        ${filterButton("all", "All", markets.length)}
         ${(state.profile.is_admin || archivedMarkets.length > 0)
           ? filterButton("archived", "Archived", archivedMarkets.length)
           : ""}
@@ -1639,6 +1640,7 @@
     });
 
     document.querySelector("#how-it-works")?.addEventListener("click", openHowItWorksModal);
+    setupScrollableFilterRows();
   }
 
   function filterButton(value, label, count) {
@@ -1647,6 +1649,7 @@
         class="filter-chip ${state.marketFilter === value ? "active" : ""}"
         data-market-filter="${value}"
         type="button"
+        aria-pressed="${state.marketFilter === value}"
       >
         ${label} · ${count}
       </button>
@@ -2270,6 +2273,33 @@
     window.setTimeout(updateScrollableTableFades, 0);
   }
 
+  function updateScrollableFilterRows() {
+    document.querySelectorAll(".filter-row").forEach((row) => {
+      const maximumScroll = Math.max(0, row.scrollWidth - row.clientWidth);
+      row.classList.toggle("has-left-overflow", row.scrollLeft > 1);
+      row.classList.toggle(
+        "has-right-overflow",
+        maximumScroll > 1 && row.scrollLeft < maximumScroll - 1,
+      );
+    });
+  }
+
+  function setupScrollableFilterRows() {
+    document.querySelectorAll(".filter-row").forEach((row) => {
+      row.addEventListener("scroll", updateScrollableFilterRows, { passive: true });
+
+      if (row.scrollWidth > row.clientWidth + 1) {
+        row.querySelector(".filter-chip.active")?.scrollIntoView({
+          block: "nearest",
+          inline: "center",
+        });
+      }
+    });
+
+    updateScrollableFilterRows();
+    window.setTimeout(updateScrollableFilterRows, 0);
+  }
+
   function renderLeaderboard() {
     const allMarkets = getAllMarkets();
     const resolvedMarketIds = new Set(
@@ -2717,6 +2747,10 @@
               <span aria-hidden="true">${state.portfolioSortDirection === "asc" ? "↑" : "↓"}</span>
             </button>
           </div>
+          <p class="portfolio-orientation-hint">
+            <i class="portfolio-orientation-icon fa-solid fa-rotate-left" aria-hidden="true"></i>
+            <span>More columns await in landscape mode</span>
+          </p>
           <section class="table-card" data-scrollable-table>
             <div class="table-scroll">
               <table class="data-table portfolio-table">
@@ -2785,6 +2819,7 @@
       renderPortfolio();
     });
 
+    setupScrollableFilterRows();
     setupScrollableTableFades();
   }
 
@@ -2809,6 +2844,7 @@
         class="filter-chip ${state.portfolioFilter === value ? "active" : ""}"
         data-portfolio-filter="${value}"
         type="button"
+        aria-pressed="${state.portfolioFilter === value}"
       >
         ${label} · ${count}
       </button>
@@ -3039,6 +3075,7 @@
 
     dom.main.innerHTML = buildAdminInvitationMarkup(data || []);
     bindAdminInvitationEvents(data || []);
+    setupScrollableTableFades();
   }
 
   function buildAdminInvitationMarkup(invitations) {
@@ -3096,7 +3133,7 @@
         <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
       </div>
 
-      <div class="portfolio-grid admin-stats">
+      <div class="portfolio-grid admin-stats" aria-label="Invitation status">
         <div class="portfolio-stat">
           <span>Ready to register</span>
           <strong>${formatNumber(availableCount)}</strong>
@@ -3139,19 +3176,21 @@
           <span class="tiny-pill">${formatNumber(invitations.length)} ${pluralize(invitations.length, "record")}</span>
         </div>
         ${invitations.length ? `
-          <div class="table-scroll">
-            <table class="data-table invitation-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Status</th>
-                  <th>Approved by</th>
-                  <th>Approved on</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
+          <div data-scrollable-table>
+            <div class="table-scroll">
+              <table class="data-table invitation-table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Approved by</th>
+                    <th>Approved on</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
           </div>
         ` : `
           <div class="empty-state compact-empty-state">

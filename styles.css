@@ -1834,12 +1834,12 @@ textarea::placeholder {
   background: var(--paper-strong);
 }
 
-.table-card[data-scrollable-table] {
+[data-scrollable-table] {
   position: relative;
 }
 
-.table-card[data-scrollable-table]::before,
-.table-card[data-scrollable-table]::after {
+[data-scrollable-table]::before,
+[data-scrollable-table]::after {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1851,18 +1851,18 @@ textarea::placeholder {
   transition: opacity 160ms ease;
 }
 
-.table-card[data-scrollable-table]::before {
+[data-scrollable-table]::before {
   left: 0;
   background: linear-gradient(90deg, rgba(16, 27, 24, 0.11), transparent);
 }
 
-.table-card[data-scrollable-table]::after {
+[data-scrollable-table]::after {
   right: 0;
   background: linear-gradient(90deg, transparent, rgba(16, 27, 24, 0.11));
 }
 
-.table-card[data-scrollable-table].has-left-overflow::before,
-.table-card[data-scrollable-table].has-right-overflow::after {
+[data-scrollable-table].has-left-overflow::before,
+[data-scrollable-table].has-right-overflow::after {
   opacity: 1;
 }
 
@@ -2064,6 +2064,7 @@ textarea::placeholder {
 }
 
 .portfolio-mobile-sort,
+.portfolio-orientation-hint,
 .position-status.portfolio-mobile-status,
 .mobile-cell-label {
   display: none;
@@ -2536,44 +2537,15 @@ textarea::placeholder {
     display: none;
   }
 
-  .hero {
-    grid-template-columns: 1fr;
-  }
-
-  .market-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .market-sidebar {
-    position: static;
-  }
-
-  .portfolio-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 720px) {
-  .site-header {
-    min-height: 64px;
-    padding: 10px 16px;
-  }
-
-  .brand small,
-  .balance-pill span {
-    display: none;
-  }
-
   .main-content {
-    width: min(calc(100% - 28px), var(--content));
-    padding: 28px 0 104px;
+    padding-bottom: calc(max(12px, env(safe-area-inset-bottom)) + 92px);
   }
 
   .mobile-nav {
     position: fixed;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
     z-index: 40;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -2611,6 +2583,78 @@ textarea::placeholder {
   .mobile-nav a.active {
     background: var(--mint);
     color: var(--ink);
+  }
+
+  .toast-root {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px);
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .market-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .market-sidebar {
+    position: static;
+  }
+
+  .portfolio-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .site-header {
+    min-height: 64px;
+    padding: 10px 16px;
+  }
+
+  .brand small,
+  .balance-pill span {
+    display: none;
+  }
+
+  .main-content {
+    width: min(calc(100% - 28px), var(--content));
+    padding: 28px 0 calc(max(12px, env(safe-area-inset-bottom)) + 92px);
+  }
+
+  .filter-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 8px;
+    scroll-snap-type: inline proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .filter-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filter-row.has-right-overflow {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+
+  .filter-row.has-left-overflow:not(.has-right-overflow) {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+    mask-image: linear-gradient(to right, transparent, #000 28px);
+  }
+
+  .filter-row.has-left-overflow.has-right-overflow {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  }
+
+  .filter-row .filter-chip {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    white-space: nowrap;
   }
 
   .page-header {
@@ -2802,6 +2846,26 @@ textarea::placeholder {
     opacity: 0.38;
   }
 
+  @media (orientation: portrait) {
+    .portfolio-orientation-hint {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: -6px 0 14px 2px;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .portfolio-orientation-icon {
+      width: 16px;
+      flex: 0 0 16px;
+      font-size: 0.82rem;
+      text-align: center;
+    }
+  }
+
   .portfolio-table {
     min-width: 0;
     table-layout: fixed;
@@ -2933,7 +2997,42 @@ textarea::placeholder {
   }
 
   .portfolio-grid.admin-stats {
-    grid-template-columns: 1fr;
+    display: block;
+    overflow: hidden;
+    padding: 0 18px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--paper-strong);
+  }
+
+  .portfolio-grid.admin-stats .portfolio-stat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    padding: 15px 0;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .portfolio-grid.admin-stats .portfolio-stat:last-child {
+    border-bottom: 0;
+  }
+
+  .portfolio-grid.admin-stats .portfolio-stat span {
+    margin: 0;
+  }
+
+  .portfolio-grid.admin-stats .portfolio-stat strong {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 1.25rem;
+  }
+
+  .portfolio-grid.admin-stats .portfolio-stat small {
+    display: none;
   }
 
   .invitation-form {
@@ -3032,8 +3131,38 @@ textarea::placeholder {
 
   .toast-root {
     right: 14px;
-    bottom: 88px;
     width: calc(100% - 28px);
+  }
+}
+
+@media (max-width: 960px) and (max-height: 500px) and (orientation: landscape) {
+  .main-content {
+    padding-bottom: calc(max(8px, env(safe-area-inset-bottom)) + 64px);
+  }
+
+  .mobile-nav {
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    padding: 4px;
+    border-radius: 14px;
+  }
+
+  .mobile-nav a {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: 0.64rem;
+    white-space: nowrap;
+  }
+
+  .mobile-nav a i {
+    font-size: 1rem;
+  }
+
+  .toast-root {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 64px);
   }
 }
 
