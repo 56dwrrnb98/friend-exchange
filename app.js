@@ -2616,6 +2616,20 @@
       ? positions
       : positions.filter((position) => position.category === state.portfolioFilter);
     const sortedPositions = sortPortfolioPositions(filteredPositions);
+    const portfolioSortOptions = [
+      ["default", "Default: Active first"],
+      ["market", "Market"],
+      ["outcome", "Your pick"],
+      ["odds", "Odds"],
+      ["status", "Status"],
+      ["committed", "Committed"],
+      ["returned", "Returned"],
+      ["profitLoss", "P/L"],
+    ];
+    const isDefaultPortfolioSort = state.portfolioSortKey === "default";
+    const portfolioSortDirectionLabel = state.portfolioSortDirection === "asc"
+      ? "Ascending"
+      : "Descending";
     const sortableHeader = (key, label, title = "", className = "") => {
       const isActive = state.portfolioSortKey === key;
       const ariaSort = isActive
@@ -2683,6 +2697,26 @@
 
       ${sortedPositions.length
         ? `
+          <div class="portfolio-mobile-sort" role="group" aria-label="Sort your predictions">
+            <label class="portfolio-mobile-sort-field" for="portfolio-mobile-sort">
+              <span>Sort by</span>
+              <select id="portfolio-mobile-sort">
+                ${portfolioSortOptions.map(([value, label]) => `
+                  <option value="${value}"${state.portfolioSortKey === value ? " selected" : ""}>${label}</option>
+                `).join("")}
+              </select>
+            </label>
+            <button
+              class="portfolio-sort-direction"
+              id="portfolio-sort-direction"
+              type="button"
+              aria-label="${isDefaultPortfolioSort ? "Default order" : `${portfolioSortDirectionLabel}. Change sort direction`}"
+              title="${isDefaultPortfolioSort ? "Default order" : portfolioSortDirectionLabel}"
+              ${isDefaultPortfolioSort ? "disabled" : ""}
+            >
+              <span aria-hidden="true">${state.portfolioSortDirection === "asc" ? "↑" : "↓"}</span>
+            </button>
+          </div>
           <section class="table-card" data-scrollable-table>
             <div class="table-scroll">
               <table class="data-table portfolio-table">
@@ -2728,6 +2762,27 @@
         }
         renderPortfolio();
       });
+    });
+
+    document.querySelector("#portfolio-mobile-sort")?.addEventListener("change", (event) => {
+      const nextKey = event.currentTarget.value;
+      const previousKey = state.portfolioSortKey;
+      state.portfolioSortKey = nextKey;
+      if (nextKey === "default") {
+        state.portfolioSortDirection = "desc";
+      } else if (previousKey !== nextKey) {
+        state.portfolioSortDirection = ["market", "outcome", "status"].includes(nextKey)
+          ? "asc"
+          : "desc";
+      }
+      renderPortfolio();
+    });
+
+    document.querySelector("#portfolio-sort-direction")?.addEventListener("click", () => {
+      if (state.portfolioSortKey === "default") return;
+      state.portfolioSortDirection =
+        state.portfolioSortDirection === "desc" ? "asc" : "desc";
+      renderPortfolio();
     });
 
     setupScrollableTableFades();
@@ -2909,19 +2964,38 @@
     return `
       <tr>
         <td class="portfolio-question-cell">
-          <a class="portfolio-question-link" href="#/market/${market.id}">${escapeHtml(market.question)}</a>
+          <div class="portfolio-question-heading">
+            <a class="portfolio-question-link" href="#/market/${market.id}">${escapeHtml(market.question)}</a>
+            <span class="portfolio-mobile-status position-status ${statusTone}">${statusLabel}</span>
+          </div>
         </td>
-        <td class="portfolio-outcome-cell"><strong>${escapeHtml(outcome.label)}</strong></td>
-        <td class="numeric-cell">
+        <td class="portfolio-outcome-cell">
+          <span class="mobile-cell-label">Your pick</span>
+          <strong>${escapeHtml(outcome.label)}</strong>
+        </td>
+        <td class="portfolio-odds-cell numeric-cell">
+          <span class="mobile-cell-label">${oddsContext === "current" ? "Current odds" : "Final odds"}</span>
           <span class="table-value-with-note">
             <strong>${formatPercent(outcome.percent)}</strong>
             <small>${oddsContext}</small>
           </span>
         </td>
-        <td><span class="position-status ${statusTone}">${statusLabel}</span></td>
-        <td class="mono numeric-cell">${formatNumber(amount)} pts</td>
-        <td class="mono numeric-cell">${returnedText}</td>
-        <td class="mono numeric-cell ${profitLossClass}">${profitLossText}</td>
+        <td class="portfolio-status-cell">
+          <span class="mobile-cell-label">Status</span>
+          <span class="position-status ${statusTone}">${statusLabel}</span>
+        </td>
+        <td class="portfolio-committed-cell mono numeric-cell">
+          <span class="mobile-cell-label">Committed</span>
+          <span class="mobile-cell-value">${formatNumber(amount)} pts</span>
+        </td>
+        <td class="portfolio-returned-cell mono numeric-cell">
+          <span class="mobile-cell-label">Returned</span>
+          <span class="mobile-cell-value">${returnedText}</span>
+        </td>
+        <td class="portfolio-profit-loss-cell mono numeric-cell ${profitLossClass}">
+          <span class="mobile-cell-label">P/L</span>
+          <span class="mobile-cell-value">${profitLossText}</span>
+        </td>
       </tr>
     `;
   }
