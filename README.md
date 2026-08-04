@@ -25,12 +25,14 @@ There is no build step, package manager, framework, or custom server.
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
 - Markets with 2–10 outcomes, including simple Yes/No questions
+- Scheduled markets and markets that remain open until the outcome becomes known
 - Community odds based on the points committed to each outcome
 - Per-outcome latest-trade movement and expandable soft-step odds history
 - Multiple predictions per member and market
 - Proportional pari-mutuel payouts
 - Automatic refunds when nobody selected the winning outcome
-- Creator-controlled resolution after closing
+- Creator- or administrator-controlled resolution with a permanent eligibility cutoff
+- Automatic refunds for predictions submitted at or after the eligibility cutoff
 - Permanent resolution notes
 - Administrator controls for invitations, point adjustments, early resolution,
   voiding, corrections, and archiving
@@ -52,9 +54,11 @@ calculated as:
 The 25-point seed softens early odds and is used only for display. It is never
 included in payouts.
 
-When a market resolves, the complete pool of committed points is divided among
-members who selected the winning outcome. Each winner receives the same
-proportion of the pool as their proportion of the winning side.
+When a market resolves, predictions submitted before the eligibility cutoff
+form the eligible pool. That complete pool is divided among members who
+selected the winning outcome. Each winner receives the same proportion of the
+pool as their proportion of the winning side. Predictions submitted at or
+after the cutoff remain in the activity record but are voided and refunded.
 
 ```text
 Total pool: 1,000 points
@@ -95,9 +99,10 @@ publication configuration. Run the complete file once on a new Supabase
 project.
 
 For an existing database, apply the files in `migrations/` in chronological
-order. After the monthly allowance migration, run
-`migrations/20260731_allowance_notifications.sql` before deploying the matching
-front end.
+order. After the monthly allowance migrations, run
+`migrations/20260731_allowance_notifications.sql` and
+`migrations/20260804_outcome_cutoffs.sql` before deploying the matching front
+end.
 
 ## 2. Configure email authentication
 

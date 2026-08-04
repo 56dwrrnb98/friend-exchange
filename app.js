@@ -827,10 +827,23 @@
   }
 
   function enrichMarket(market) {
+    const closeMode = market.close_mode || "date";
+    const marketPredictions = state.predictions.filter((prediction) => prediction.market_id === market.id);
+    const eligibilityCutoff = getTimestamp(market.eligibility_cutoff_at);
+    const hasSettlementCutoff = market.status === "resolved" && Number.isFinite(eligibilityCutoff);
+    const latePredictions = hasSettlementCutoff
+      ? marketPredictions.filter(
+          (prediction) => getTimestamp(prediction.created_at, 0) >= eligibilityCutoff,
+        )
+      : [];
+    const latePredictionSet = new Set(latePredictions);
+    const officialPredictions = hasSettlementCutoff
+      ? marketPredictions.filter((prediction) => !latePredictionSet.has(prediction))
+      : marketPredictions;
     const outcomes = state.outcomes
       .filter((outcome) => outcome.market_id === market.id)
       .map((outcome) => {
-        const predictions = state.predictions.filter((prediction) => prediction.outcome_id === outcome.id);
+        const predictions = officialPredictions.filter((prediction) => prediction.outcome_id === outcome.id);
         const actualPoints = predictions.reduce((sum, prediction) => sum + prediction.amount, 0);
         return { ...outcome, predictions, actualPoints };
       });
@@ -845,20 +858,25 @@
         : 100 / Math.max(outcomes.length, 1);
     });
 
-    const marketPredictions = state.predictions.filter((prediction) => prediction.market_id === market.id);
-    const participants = new Set(marketPredictions.map((prediction) => prediction.user_id));
+    const participants = new Set(officialPredictions.map((prediction) => prediction.user_id));
     const creator = state.profiles.find((profile) => profile.id === market.creator_id);
+    const resolver = state.profiles.find((profile) => profile.id === market.resolved_by);
     const winner = outcomes.find((outcome) => outcome.id === market.winning_outcome_id) || null;
-    const isPastClose = new Date(market.closes_at).getTime() <= Date.now();
+    const isPastClose = closeMode === "date" && getTimestamp(market.closes_at, Infinity) <= Date.now();
     const displayStatus = market.status === "open" && isPastClose ? "closed" : market.status;
 
     return {
       ...market,
+      closeMode,
       outcomes,
       predictions: marketPredictions,
+      officialPredictions,
+      latePredictions,
+      lateTotal: latePredictions.reduce((sum, prediction) => sum + prediction.amount, 0),
       actualTotal,
       participants: participants.size,
       creator,
+      resolver,
       winner,
       isPastClose,
       displayStatus,
@@ -872,6 +890,15 @@
   function getTimestamp(value, fallback = null) {
     const timestamp = new Date(value).getTime();
     return Number.isFinite(timestamp) ? timestamp : fallback;
+  }
+
+  function isLatePrediction(prediction, market) {
+    const cutoff = getTimestamp(market?.eligibility_cutoff_at);
+    return Boolean(
+      market?.status === "resolved" &&
+      Number.isFinite(cutoff) &&
+      getTimestamp(prediction?.created_at, 0) >= cutoff
+    );
   }
 
   function sortMarketPredictions(predictions) {
@@ -909,12 +936,15 @@
   function getMarketOddsStopTimestamp(market, startTimestamp, lastPredictionTimestamp, now) {
     const closesAt = getTimestamp(market.closes_at);
     const resolvedAt = getTimestamp(market.resolved_at);
+    const eligibilityCutoff = getTimestamp(market.eligibility_cutoff_at);
     let stopTimestamp;
 
     if (market.status === "open") {
       stopTimestamp = Number.isFinite(closesAt) ? Math.min(now, closesAt) : now;
     } else {
-      const stopCandidates = [closesAt, resolvedAt].filter(Number.isFinite);
+      const stopCandidates = Number.isFinite(eligibilityCutoff)
+        ? [eligibilityCutoff]
+        : [closesAt, resolvedAt].filter(Number.isFinite);
       stopTimestamp = stopCandidates.length
         ? Math.min(...stopCandidates)
         : lastPredictionTimestamp || now;
@@ -928,7 +958,9 @@
   }
 
   function buildMarketOddsTimeline(market, now = Date.now()) {
-    const predictions = sortMarketPredictions(market.predictions || []);
+    const predictions = sortMarketPredictions(
+      market.officialPredictions || market.predictions || [],
+    );
     const firstPredictionTimestamp = predictions.length
       ? getTimestamp(predictions[0].created_at, now)
       : now;
@@ -1515,10 +1547,12 @@
     if (scenarios.length === 0 || market.status !== "open") return "";
 
     return `
-      <section class="live-position" aria-labelledby="live-position-heading">
-        <div class="live-position-heading">
-          <p class="eyebrow" id="live-position-heading">Your live position</p>
-          <span>If resolved now</span>
+      <section class="panel live-position" aria-labelledby="live-position-heading">
+        <div class="panel-heading live-position-heading">
+          <div>
+            <h2 id="live-position-heading">Your live position</h2>
+            <p>Based on the pool right now.</p>
+          </div>
         </div>
         <div class="live-position-list">
           ${scenarios.map((scenario) => {
@@ -1541,7 +1575,242 @@
             `;
           }).join("")}
         </div>
-        <p class="live-position-note">Current pool only. Updates as predictions are added.</p>
+        <p class="live-position-note">Updates as predictions are added.</p>
+      </section>
+    `;
+  }
+
+  function formatTimelineMoment(value, fallback) {
+    if (!value) return fallback;
+    return Number.isFinite(getTimestamp(value)) ? formatDateTime(value) : fallback;
+  }
+
+  function renderMarketTimelineStep({
+    state: stepState,
+    title,
+    time,
+    detail,
+    resultLabel = null,
+    sourceUrl = null,
+  }) {
+    return `
+      <li class="market-timeline-step is-${stepState}">
+        <span class="market-timeline-marker" aria-hidden="true"></span>
+        <div class="market-timeline-step-content">
+          <strong>${escapeHtml(title)}</strong>
+          <span class="market-timeline-time">${escapeHtml(time)}</span>
+          ${resultLabel ? `<p class="market-timeline-result">Winner: <strong>${escapeHtml(resultLabel)}</strong>.</p>` : ""}
+          ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+          ${sourceUrl ? `
+            <a
+              class="market-timeline-source"
+              href="${escapeAttribute(sourceUrl)}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View result source
+              <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            </a>
+          ` : ""}
+        </div>
+      </li>
+    `;
+  }
+
+  function getResolvedSettlementSummary(market) {
+    const eligibleTotal = Number(market.actualTotal || 0);
+    const lateTotal = Number(market.lateTotal || 0);
+    const winnerHasBacking = Number(market.winner?.actualPoints || 0) > 0;
+    const parts = [];
+
+    if (eligibleTotal <= 0) {
+      parts.push("no points went to a winner");
+    } else if (winnerHasBacking) {
+      parts.push(
+        `${formatNumber(eligibleTotal)} ${pluralize(eligibleTotal, "point")} paid to the winners`,
+      );
+    } else {
+      parts.push(
+        `${formatNumber(eligibleTotal)} ${pluralize(eligibleTotal, "point")} returned because nobody backed the winner`,
+      );
+    }
+
+    if (lateTotal > 0) {
+      parts.push(
+        `${formatNumber(lateTotal)} ${pluralize(lateTotal, "point")} from late predictions refunded`,
+      );
+    }
+
+    return `Payout complete: ${parts.join(" · ")}.`;
+  }
+
+  function renderMarketTimeline(market) {
+    const openedAt = formatTimelineMoment(market.created_at, "Opening time not recorded");
+    const closeMode = market.closeMode || market.close_mode || "date";
+    const displayStatus = market.displayStatus || market.status;
+    let subtitle;
+    let steps;
+    let summary;
+    let summaryClass = "";
+
+    const openedStep = {
+      state: "complete",
+      title: "Market opened",
+      time: openedAt,
+      detail: "Trading opened. Expertise was neither required nor verified.",
+    };
+
+    if (market.status === "void") {
+      const refundTotal = (market.predictions || []).reduce(
+        (total, prediction) => total + Number(prediction.amount || 0),
+        0,
+      );
+      const archiveDetail = market.archived_at
+        ? ` Archived ${formatDateTime(market.archived_at)}.`
+        : "";
+      subtitle = "What happened and how the points got home.";
+      steps = [
+        openedStep,
+        {
+          state: "complete",
+          title: "Cancellation & refunds",
+          time: formatTimelineMoment(market.resolved_at, "Cancellation time not recorded"),
+          detail: refundTotal > 0
+            ? `The market was cancelled, so all ${formatNumber(refundTotal)} ${pluralize(refundTotal, "point")} went back to their owners.${archiveDetail}`
+            : `The market was cancelled before anyone put points on it.${archiveDetail}`,
+        },
+      ];
+      summary = "Nobody won. Everyone got their points back.";
+      summaryClass = " is-refund";
+    } else if (displayStatus === "resolved") {
+      const cutoffAt =
+        market.eligibility_cutoff_at || market.outcome_known_at || market.closes_at;
+      const resolvedAt = formatTimelineMoment(
+        market.resolved_at,
+        "Result time not recorded",
+      );
+      const resolverSuffix = market.resolver?.display_name
+        ? ` · by ${market.resolver.display_name}`
+        : "";
+      const winnerLabel = market.winner?.label || "Resolved";
+      const resolutionDetail = market.resolution_note || "";
+      let cutoffDetail;
+
+      if (closeMode === "date") {
+        const knownTimestamp = market.outcome_known_at
+          ? getTimestamp(market.outcome_known_at, NaN)
+          : NaN;
+        const closeTimestamp = market.closes_at
+          ? getTimestamp(market.closes_at, NaN)
+          : NaN;
+        const hasKnownTime = Number.isFinite(knownTimestamp);
+        const hasScheduledClose = Number.isFinite(closeTimestamp);
+
+        if (hasKnownTime && hasScheduledClose && closeTimestamp < knownTimestamp) {
+          cutoffDetail =
+            `Predictions closed as scheduled on ${formatDateTime(market.closes_at)}. ` +
+            `The outcome became known later on ${formatDateTime(market.outcome_known_at)}.`;
+        } else if (hasKnownTime && hasScheduledClose && knownTimestamp < closeTimestamp) {
+          cutoffDetail =
+            "The outcome became known before predictions were scheduled to close. " +
+            "Predictions made from that point on didn’t count and were refunded.";
+        } else if (hasKnownTime && hasScheduledClose) {
+          cutoffDetail = "The outcome became known as predictions closed.";
+        } else if (hasKnownTime) {
+          cutoffDetail =
+            "The scheduled close wasn’t recorded. Predictions made from the time the outcome became known didn’t count and were refunded.";
+        } else {
+          cutoffDetail = "Predictions closed as scheduled. The time the outcome became known wasn’t recorded.";
+        }
+      } else {
+        cutoffDetail =
+          "The outcome became known at this time. Predictions made from that point on didn’t count and were refunded.";
+      }
+
+      subtitle = "When it opened, what happened, and where the points went.";
+      steps = [
+        openedStep,
+        {
+          state: "complete",
+          title: "Prediction cutoff",
+          time: formatTimelineMoment(cutoffAt, "Prediction cutoff time not recorded"),
+          detail: cutoffDetail,
+          sourceUrl: market.resolution_source_url,
+        },
+        {
+          state: "complete",
+          title: "Result & payout",
+          time: `${resolvedAt}${resolverSuffix}`,
+          detail: resolutionDetail,
+          resultLabel: winnerLabel,
+        },
+      ];
+      summary = getResolvedSettlementSummary(market);
+      summaryClass = " is-complete";
+    } else if (closeMode === "outcome") {
+      subtitle = "Predictions stay open until someone makes the result official. Hindsight still doesn’t count.";
+      steps = [
+        openedStep,
+        {
+          state: "current",
+          title: "Prediction cutoff",
+          time: "When the outcome becomes known",
+          detail:
+            "At resolution, the time the outcome became known is recorded. Predictions made from that point on don’t count and are refunded.",
+        },
+        {
+          state: "pending",
+          title: "Result & payout",
+          time: "When the market is resolved",
+          detail:
+            "The pool is paid out to the winners right away. Points from late predictions are refunded at the same time.",
+        },
+      ];
+      summary =
+        "You can add more points—or quietly back another outcome—but committed points can’t be withdrawn.";
+    } else {
+      const tradingClosed = displayStatus === "closed";
+      const scheduledClose = formatTimelineMoment(
+        market.closes_at,
+        "Scheduled close not recorded",
+      );
+      subtitle = tradingClosed
+        ? "Predictions are closed. Now we wait for the final call."
+        : "Predictions close on schedule. If the answer gets out first, hindsight doesn’t count.";
+      steps = [
+        openedStep,
+        {
+          state: tradingClosed ? "complete" : "current",
+          title: "Prediction cutoff",
+          time: scheduledClose,
+          detail:
+            "Predictions close at this time unless the outcome is known sooner. If that happens, only earlier predictions count.",
+        },
+        {
+          state: tradingClosed ? "current" : "pending",
+          title: "Result & payout",
+          time: "When the market is resolved",
+          detail:
+            "The result and the time it became known are recorded. Then the pool is paid out to the winners, and points from late predictions are refunded.",
+        },
+      ];
+      summary = tradingClosed
+        ? "Committed points stay put until the result is made official."
+        : "You can add more points—or quietly back another outcome—but committed points can’t be withdrawn.";
+    }
+
+    return `
+      <section class="panel market-timeline-panel" aria-labelledby="market-timeline-heading">
+        <div class="panel-heading market-timeline-heading">
+          <div>
+            <h2 id="market-timeline-heading">Timeline &amp; payout</h2>
+            <p>${escapeHtml(subtitle)}</p>
+          </div>
+        </div>
+        <ol class="market-timeline-list">
+          ${steps.map(renderMarketTimelineStep).join("")}
+        </ol>
+        <p class="market-timeline-summary${summaryClass}">${escapeHtml(summary)}</p>
       </section>
     `;
   }
@@ -1695,10 +1964,16 @@
         </div>
         <footer class="market-card-footer">
           <span>${formatNumber(market.actualTotal)} pts · ${market.participants} ${pluralize(market.participants, "trader")}</span>
-          <span>${market.displayStatus === "open" ? `Closes ${formatRelativeDate(market.closes_at)}` : formatStatusFooter(market)}</span>
+          <span>${market.displayStatus === "open" ? formatOpenMarketFooter(market) : formatStatusFooter(market)}</span>
         </footer>
       </article>
     `;
+  }
+
+  function formatOpenMarketFooter(market) {
+    return market.closeMode === "outcome"
+      ? "Open until outcome"
+      : `Closes ${formatRelativeDate(market.closes_at)}`;
   }
 
   function formatStatusFooter(market) {
@@ -1735,12 +2010,11 @@
       market.predictions.length > 0;
     const canRestore = state.profile.is_admin && market.status === "void" && Boolean(market.archived_at);
     const canPredict = market.displayStatus === "open";
-    const canResolve = canManage && market.status === "open" && (market.isPastClose || state.profile.is_admin);
+    const canResolve = canManage && market.status === "open";
     const canVoid = canManage && market.status === "open";
     const hasMarketControls =
-      state.profile.is_admin &&
-      (canEdit || canResolve || canVoid || canArchive || canRestore || canDelete);
-    const userPredictions = market.predictions.filter((prediction) => prediction.user_id === state.user.id);
+      canEdit || canResolve || canVoid || canArchive || canRestore || canDelete;
+    const userPredictions = market.officialPredictions.filter((prediction) => prediction.user_id === state.user.id);
     const userCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortedOutcomes = [...market.outcomes].sort((a, b) => b.percent - a.percent);
     const recentActivity = [...market.predictions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20);
@@ -1763,18 +2037,19 @@
         });
       }
     });
-    const isOddsHistoryExpanded = state.oddsHistoryMarketId === market.id;
+    const isOddsHistoryExpanded =
+      state.oddsHistoryMarketId === market.id && market.officialPredictions.length > 0;
 
     dom.main.innerHTML = `
       <div class="market-layout">
         <div class="market-main">
           <section class="market-hero">
-            <p class="eyebrow">Market #${market.id} · ${escapeHtml(statusLabel(market.archived_at ? "archived" : market.displayStatus))}</p>
+            <p class="eyebrow">Market #${market.id}</p>
             <h1>${escapeHtml(market.question)}</h1>
             ${market.description ? `<p class="market-description">${escapeHtml(market.description)}</p>` : ""}
             <div class="market-meta-row">
               <span class="tiny-pill">Created by ${escapeHtml(market.creator?.display_name || "Unknown")}</span>
-              <span class="tiny-pill">Closes ${formatDateTime(market.closes_at)}</span>
+              <span class="tiny-pill">${market.closeMode === "outcome" ? "Open until outcome" : `Closes ${formatDateTime(market.closes_at)}`}</span>
               <span class="tiny-pill">${formatNumber(market.actualTotal)} points in pool</span>
               ${market.archived_at ? `<span class="tiny-pill">Archived ${formatDateTime(market.archived_at)}</span>` : ""}
             </div>
@@ -1788,7 +2063,7 @@
               </div>
               <div class="panel-heading-actions">
                 ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
-                ${market.predictions.length ? `
+                ${market.officialPredictions.length ? `
                   <button
                     class="odds-history-toggle"
                     id="toggle-odds-history"
@@ -1820,6 +2095,10 @@
             ${isOddsHistoryExpanded ? renderOddsHistoryChart(market, oddsTimeline) : ""}
           </section>
 
+          ${renderMarketTimeline(market)}
+
+          ${renderLivePosition(market, state.user.id)}
+
           <section class="panel">
             <div class="panel-heading">
               <div>
@@ -1850,47 +2129,40 @@
         </div>
 
         <aside class="market-sidebar">
-          <section class="card">
-            <p class="eyebrow">Market snapshot</p>
-            <div class="stats-grid">
-              <div class="stat-card">
-                <span>Pool</span>
-                <strong>${formatNumber(market.actualTotal)}</strong>
-              </div>
-              <div class="stat-card">
-                <span>Traders</span>
-                <strong>${market.participants}</strong>
-              </div>
-              <div class="stat-card">
-                <span>Trades</span>
-                <strong>${market.predictions.length}</strong>
-              </div>
+          <section class="card market-statement-card">
+            <div class="market-statement-header">
+              <p class="eyebrow">Market snapshot</p>
             </div>
 
-            <div class="summary-stack" style="margin-top:18px">
-              <div class="summary-row">
-                <span>Your balance</span>
-                <strong>${formatNumber(state.profile.balance)} pts</strong>
-              </div>
-              <div class="summary-row">
-                <span>Your points committed</span>
-                <strong>${formatNumber(userCommitted)} pts</strong>
-              </div>
-              <div class="summary-row summary-row-resolution">
-                <span>Resolution</span>
-                <div class="resolution-summary">
-                  <strong>${market.displayStatus === "resolved" ? escapeHtml(market.winner?.label || "Resolved") : market.displayStatus === "void" ? "Voided" : "Pending"}</strong>
-                  ${market.displayStatus === "resolved" && market.resolution_note
-                    ? `<p>${escapeHtml(market.resolution_note)}</p>`
-                    : ""}
+            <div class="market-statement-ledger">
+              <div class="stats-grid">
+                <div class="stat-card">
+                  <strong>${formatNumber(market.actualTotal)}</strong>
+                  <span>${market.displayStatus === "resolved" ? "Final pool" : "Pool"}</span>
+                </div>
+                <div class="stat-card">
+                  <strong>${market.participants}</strong>
+                  <span>${market.displayStatus === "resolved" ? "Traders counted" : "Traders"}</span>
+                </div>
+                <div class="stat-card">
+                  <strong>${market.displayStatus === "resolved" ? formatNumber(market.lateTotal) : market.predictions.length}</strong>
+                  <span>${market.displayStatus === "resolved" ? "Late refunds" : "Predictions"}</span>
                 </div>
               </div>
+
+              <div class="summary-stack">
+                <div class="summary-row">
+                  <span>Available balance</span>
+                  <strong>${formatNumber(state.profile.balance)} pts</strong>
+                </div>
+                <div class="summary-row">
+                  <span>Committed to this market</span>
+                  <strong>${formatNumber(userCommitted)} pts</strong>
+                </div>
+              </div>
+
             </div>
-
-            ${renderLivePosition(market, state.user.id)}
-
             <div class="sidebar-actions">
-              ${canPredict ? '<button class="button button-primary" id="predict-outcome" type="button">Place a prediction</button>' : ""}
               ${hasMarketControls ? `
                 <div class="sidebar-management">
                   <p class="eyebrow sidebar-actions-label">Market controls</p>
@@ -1908,13 +2180,6 @@
             </div>
           </section>
 
-          <section class="card">
-            <p class="eyebrow">The fine print</p>
-            <p class="muted" style="font-size:.78rem;margin:0">
-              Predictions are final. You may add more points later, including to a different outcome,
-              but committed points cannot be withdrawn. Winners split the entire pool proportionally.
-            </p>
-          </section>
         </aside>
       </div>
     `;
@@ -1925,10 +2190,6 @@
 
     document.querySelectorAll("[data-predict-outcome]").forEach((button) => {
       button.addEventListener("click", () => openPredictionModal(market, Number(button.dataset.predictOutcome)));
-    });
-
-    document.querySelector("#predict-outcome")?.addEventListener("click", () => {
-      openPredictionModal(market);
     });
 
     document.querySelector("#edit-market")?.addEventListener("click", () => openEditMarketModal(market));
@@ -2003,7 +2264,7 @@
 
   function renderOutcomeCard(outcome, market, canPredict, movement, liveChange) {
     const isWinner = market.winning_outcome_id === outcome.id;
-    const userAmount = market.predictions
+    const userAmount = (market.officialPredictions || market.predictions)
       .filter((prediction) => prediction.user_id === state.user.id && prediction.outcome_id === outcome.id)
       .reduce((sum, prediction) => sum + prediction.amount, 0);
     const outcomeMovement = movement || {
@@ -2055,9 +2316,10 @@
     const eventCopy = historyEvent
       ? getHistoryEventCopy(historyEvent, market)
       : null;
+    const late = isLatePrediction(prediction, market);
 
     return `
-      <div class="activity-item">
+      <div class="activity-item${late ? " is-refunded" : ""}">
         ${renderProfileAvatar(profile || { display_name: name })}
         <div class="activity-copy">
           <div class="activity-statement">
@@ -2065,7 +2327,11 @@
             <span> committed ${formatNumber(prediction.amount)} pts to </span>
             <strong>${escapeHtml(outcome?.label || "an outcome")}</strong>
           </div>
-          ${eventCopy ? `
+          ${late ? `
+            <span class="activity-impact activity-refund">
+              Didn’t count · Submitted once the outcome was known · ${formatNumber(prediction.amount)} pts refunded
+            </span>
+          ` : eventCopy ? `
             <span class="activity-impact">
               ${escapeHtml(eventCopy.impactText)}
             </span>
@@ -2128,19 +2394,35 @@
           <div class="form-section-heading">
             <span class="form-number">03</span>
             <div>
-              <h2>Set the closing bell</h2>
-              <p>No new predictions can be placed after this time.</p>
+              <h2>Choose the closing rule</h2>
+              <p>Close predictions at a set time, or keep them open until someone makes the result official.</p>
             </div>
           </div>
+          <div class="close-mode-options" role="radiogroup" aria-label="When predictions close">
+            <label class="close-mode-option">
+              <input type="radio" name="closeMode" value="date" checked />
+              <span>
+                <strong>Open until date</strong>
+                <small>Predictions stop automatically at a date and time.</small>
+              </span>
+            </label>
+            <label class="close-mode-option">
+              <input type="radio" name="closeMode" value="outcome" />
+              <span>
+                <strong>Open until outcome</strong>
+                <small>Predictions made once the outcome is known don’t count and are refunded.</small>
+              </span>
+            </label>
+          </div>
           <div class="form-grid">
-            <div class="form-field">
+            <div class="form-field" id="scheduled-close-field">
               <label for="market-closes">Predictions close</label>
               <input id="market-closes" name="closesAt" type="datetime-local" value="${defaultClose}" required />
             </div>
             <div class="form-field">
-              <span class="field-label">Who resolves it?</span>
+              <span class="field-label">Who makes the result official?</span>
               <div style="min-height:48px;display:flex;align-items:center;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:#faf9f2;font-size:.82rem">
-                You, plus any site administrator
+                You, plus any site admin
               </div>
             </div>
           </div>
@@ -2193,6 +2475,21 @@
 
     renderChoices();
 
+    const closeModeInputs = [...document.querySelectorAll('input[name="closeMode"]')];
+    const scheduledCloseField = document.querySelector("#scheduled-close-field");
+    const scheduledCloseInput = document.querySelector("#market-closes");
+    const updateCloseMode = () => {
+      const closeMode = closeModeInputs.find((input) => input.checked)?.value || "date";
+      const usesDate = closeMode === "date";
+      scheduledCloseField?.classList.toggle("hidden", !usesDate);
+      if (scheduledCloseInput) {
+        scheduledCloseInput.required = usesDate;
+        scheduledCloseInput.disabled = !usesDate;
+      }
+    };
+    closeModeInputs.forEach((input) => input.addEventListener("change", updateCloseMode));
+    updateCloseMode();
+
     document.querySelector("#add-choice").addEventListener("click", () => {
       if (choices.length >= 10) return;
       choices.push("");
@@ -2205,6 +2502,7 @@
       const form = new FormData(event.currentTarget);
       const question = String(form.get("question") || "").trim();
       const description = String(form.get("description") || "").trim();
+      const closeMode = String(form.get("closeMode") || "date");
       const closesAtRaw = String(form.get("closesAt") || "");
       const outcomeLabels = choices.map((choice) => choice.trim()).filter(Boolean);
       const normalized = outcomeLabels.map((label) => label.toLocaleLowerCase());
@@ -2220,8 +2518,11 @@
         return;
       }
 
-      const closesAt = new Date(closesAtRaw);
-      if (Number.isNaN(closesAt.getTime()) || closesAt.getTime() <= Date.now()) {
+      const closesAt = closeMode === "date" ? new Date(closesAtRaw) : null;
+      if (
+        closeMode === "date" &&
+        (Number.isNaN(closesAt.getTime()) || closesAt.getTime() <= Date.now())
+      ) {
         showToast("Choose a closing time in the future.", "error");
         return;
       }
@@ -2231,7 +2532,8 @@
       const { data, error } = await state.client.rpc("create_market", {
         p_question: question,
         p_description: description || null,
-        p_closes_at: closesAt.toISOString(),
+        p_close_mode: closeMode,
+        p_closes_at: closesAt ? closesAt.toISOString() : null,
         p_outcome_labels: outcomeLabels,
       });
 
@@ -2302,6 +2604,7 @@
 
   function renderLeaderboard() {
     const allMarkets = getAllMarkets();
+    const marketById = new Map(allMarkets.map((market) => [market.id, market]));
     const resolvedMarketIds = new Set(
       allMarkets
         .filter((market) => market.displayStatus === "resolved")
@@ -2311,27 +2614,31 @@
       const profilePredictions = state.predictions.filter(
         (prediction) => prediction.user_id === profile.id
       );
-      const committed = profilePredictions
+      const countablePredictions = profilePredictions.filter(
+        (prediction) => !isLatePrediction(prediction, marketById.get(prediction.market_id)),
+      );
+      const committed = countablePredictions
         .filter((prediction) => {
           const market = state.markets.find((item) => item.id === prediction.market_id);
           return market?.status === "open";
         })
         .reduce((sum, prediction) => sum + prediction.amount, 0);
-      const resolvedCommitted = profilePredictions
+      const resolvedCommitted = countablePredictions
         .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
         .reduce((sum, prediction) => sum + prediction.amount, 0);
       const resolvedPayouts = state.payouts
         .filter(
           (payout) =>
             payout.user_id === profile.id &&
-            resolvedMarketIds.has(payout.market_id)
+            resolvedMarketIds.has(payout.market_id) &&
+            payout.kind !== "late_refund"
         )
         .reduce((sum, payout) => sum + payout.amount, 0);
       const profitLoss = resolvedPayouts - resolvedCommitted;
 
       return {
         ...profile,
-        activity: profilePredictions.length,
+        activity: countablePredictions.length,
         committed,
         profitLoss,
         resolvedCommitted,
@@ -2405,7 +2712,9 @@
         .map((market) => market.id)
     );
     const eligiblePredictions = state.predictions.filter(
-      (prediction) => eligibleMarketIds.has(prediction.market_id)
+      (prediction) =>
+        eligibleMarketIds.has(prediction.market_id) &&
+        !isLatePrediction(prediction, marketById.get(prediction.market_id))
     );
     const wagerPositions = new Map();
 
@@ -2573,9 +2882,13 @@
 
   function renderPortfolio() {
     const allMarkets = getAllMarkets();
+    const marketById = new Map(allMarkets.map((market) => [market.id, market]));
     const userPredictions = state.predictions.filter((prediction) => prediction.user_id === state.user.id);
+    const eligibleUserPredictions = userPredictions.filter(
+      (prediction) => !isLatePrediction(prediction, marketById.get(prediction.market_id)),
+    );
     const userPayouts = state.payouts.filter((payout) => payout.user_id === state.user.id);
-    const totalCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
+    const totalCommitted = eligibleUserPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const unresolvedMarketIds = new Set(
       state.markets
         .filter((market) => market.status === "open")
@@ -2592,11 +2905,15 @@
         .filter((market) => market.displayStatus === "resolved")
         .map((market) => market.id)
     );
-    const resolvedCommitted = userPredictions
+    const resolvedCommitted = eligibleUserPredictions
       .filter((prediction) => resolvedMarketIds.has(prediction.market_id))
       .reduce((sum, prediction) => sum + prediction.amount, 0);
     const resolvedPayouts = userPayouts
-      .filter((payout) => resolvedMarketIds.has(payout.market_id))
+      .filter(
+        (payout) =>
+          resolvedMarketIds.has(payout.market_id) &&
+          payout.kind !== "late_refund",
+      )
       .reduce((sum, payout) => sum + payout.amount, 0);
     const profitLoss = resolvedPayouts - resolvedCommitted;
     const profitLossClass =
@@ -2610,8 +2927,15 @@
 
     const groups = new Map();
     userPredictions.forEach((prediction) => {
-      const key = `${prediction.market_id}:${prediction.outcome_id}`;
-      const existing = groups.get(key) || { marketId: prediction.market_id, outcomeId: prediction.outcome_id, amount: 0, latest: prediction.created_at };
+      const late = isLatePrediction(prediction, marketById.get(prediction.market_id));
+      const key = `${prediction.market_id}:${prediction.outcome_id}:${late ? "late" : "eligible"}`;
+      const existing = groups.get(key) || {
+        marketId: prediction.market_id,
+        outcomeId: prediction.outcome_id,
+        amount: 0,
+        latest: prediction.created_at,
+        isLate: late,
+      };
       existing.amount += prediction.amount;
       if (new Date(prediction.created_at) > new Date(existing.latest)) existing.latest = prediction.created_at;
       groups.set(key, existing);
@@ -2621,7 +2945,11 @@
       .map((position) => {
         const market = allMarkets.find((item) => item.id === position.marketId);
         const outcome = market?.outcomes.find((item) => item.id === position.outcomeId);
-        const payout = state.payouts.find((item) => item.market_id === position.marketId && item.user_id === state.user.id);
+        const payout = state.payouts.find((item) => {
+          if (item.market_id !== position.marketId || item.user_id !== state.user.id) return false;
+          if (position.isLate) return item.kind === "late_refund";
+          return item.kind !== "late_refund";
+        });
         return { ...position, market, outcome, payout };
       })
       .filter((position) => position.market && position.outcome)
@@ -2825,6 +3153,7 @@
 
   function getPositionCategory(position) {
     const { market, outcome, payout } = position;
+    if (position.isLate) return "refunded";
     if (["open", "closed"].includes(market.displayStatus)) return "active";
     if (
       market.displayStatus === "void" ||
@@ -2863,6 +3192,17 @@
     let statusOrder = 0;
     let returned = null;
     let positionProfitLoss = null;
+
+    if (position.isLate) {
+      return {
+        oddsContext: "final",
+        positionProfitLoss: 0,
+        returned: amount,
+        statusLabel: "Refunded · After cutoff",
+        statusOrder: 4,
+        statusTone: "is-refunded",
+      };
+    }
 
     if (market.displayStatus === "closed") {
       statusLabel = "Awaiting result";
@@ -3458,7 +3798,45 @@
     });
   }
 
+  function calculateResolutionPreview(market, winningOutcomeId, outcomeKnownAt) {
+    const outcomeKnownTimestamp = getTimestamp(outcomeKnownAt);
+    const scheduledCloseTimestamp = getTimestamp(market.closes_at);
+    const closeMode = market.closeMode || market.close_mode || "date";
+    const eligibilityCutoff = closeMode === "date" && Number.isFinite(scheduledCloseTimestamp)
+      ? Math.min(scheduledCloseTimestamp, outcomeKnownTimestamp)
+      : outcomeKnownTimestamp;
+    const eligiblePredictions = market.predictions.filter(
+      (prediction) => getTimestamp(prediction.created_at, 0) < eligibilityCutoff,
+    );
+    const latePredictions = market.predictions.filter(
+      (prediction) => getTimestamp(prediction.created_at, 0) >= eligibilityCutoff,
+    );
+    const eligiblePool = eligiblePredictions.reduce(
+      (sum, prediction) => sum + prediction.amount,
+      0,
+    );
+    const winningPool = eligiblePredictions
+      .filter((prediction) => prediction.outcome_id === winningOutcomeId)
+      .reduce((sum, prediction) => sum + prediction.amount, 0);
+    const lateRefundTotal = latePredictions.reduce(
+      (sum, prediction) => sum + prediction.amount,
+      0,
+    );
+
+    return {
+      eligibilityCutoff,
+      eligiblePredictionCount: eligiblePredictions.length,
+      eligiblePool,
+      winningPool,
+      latePredictionCount: latePredictions.length,
+      lateRefundTotal,
+      noWinnerRefund: eligiblePool > 0 && winningPool === 0,
+    };
+  }
+
   function openResolveModal(market) {
+    const defaultOutcomeKnown = toLocalDateTimeInput(new Date());
+    const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
     openModal(`
       <div class="modal-header">
         <div>
@@ -3478,8 +3856,33 @@
               </label>
             `).join("")}
           </div>
+          <div class="form-grid resolution-settlement-fields">
+            <div class="form-field form-field-full">
+              <label for="outcome-known-at">Outcome became known</label>
+              <input
+                id="outcome-known-at"
+                name="outcomeKnownAt"
+                type="datetime-local"
+                step="60"
+                max="${defaultOutcomeKnown}"
+                value="${defaultOutcomeKnown}"
+                required
+              />
+              <small>Enter the earliest minute the answer was clear—not when you happened to notice. Times are shown in ${escapeHtml(localTimeZone)}.</small>
+            </div>
+            <div class="form-field form-field-full">
+              <label for="resolution-source-url">Source link <span class="muted">(optional)</span></label>
+              <input
+                id="resolution-source-url"
+                name="resolutionSourceUrl"
+                type="url"
+                maxlength="2048"
+                placeholder="https://…"
+              />
+            </div>
+          </div>
           <div class="form-field resolution-note-field">
-            <label for="resolution-note">Resolution note</label>
+            <label for="resolution-note">Result note</label>
             <textarea
               id="resolution-note"
               name="resolutionNote"
@@ -3489,38 +3892,102 @@
               required
             ></textarea>
             <small id="resolution-note-help">
-              Briefly record what happened. This becomes part of the permanent settlement record.
+              Briefly record what happened. This becomes part of the permanent result record.
             </small>
             <div class="character-counter-row">
-              <output id="resolution-note-count" class="character-counter" for="resolution-note" aria-label="Resolution note character count">0 / 280</output>
+              <output id="resolution-note-count" class="character-counter" for="resolution-note" aria-label="Result note character count">0 / 280</output>
             </div>
           </div>
+          <div class="resolution-preview" aria-live="polite">
+            <div class="trade-summary-row">
+              <span>Prediction cutoff</span>
+              <strong id="resolution-cutoff-preview">—</strong>
+            </div>
+            <div class="trade-summary-row">
+              <span>Predictions that count</span>
+              <strong id="resolution-eligible-preview">—</strong>
+            </div>
+            <div class="trade-summary-row">
+              <span>Points on the winner</span>
+              <strong id="resolution-winning-preview">—</strong>
+            </div>
+            <div class="trade-summary-row">
+              <span>Late predictions refunded</span>
+              <strong id="resolution-late-preview">—</strong>
+            </div>
+            <p class="trade-warning" id="resolution-refund-preview"></p>
+          </div>
           <p class="trade-warning">
-            This closes the market and distributes the full pool proportionally among winning predictors.
-            If nobody selected the winning outcome, all predictions are refunded.
+            This result is permanent. The pool is split among the winners based on how many points they put in.
+            Predictions made from the cutoff on don’t count and are refunded.
           </p>
         </div>
         <div class="modal-footer">
           <button class="button button-secondary" data-modal-close type="button">Cancel</button>
-          <button class="button button-primary" type="submit">Resolve and distribute</button>
+          <button class="button button-primary" type="submit">Make it official &amp; pay out</button>
         </div>
       </form>
     `);
 
     bindCharacterCounter("resolution-note", "resolution-note-count", 280);
 
+    const outcomeKnownField = document.querySelector("#outcome-known-at");
+    const updateResolutionPreview = () => {
+      const winner = Number(document.querySelector('input[name="winner"]:checked')?.value);
+      const outcomeKnownAt = new Date(String(outcomeKnownField?.value || ""));
+      if (!winner || Number.isNaN(outcomeKnownAt.getTime())) return;
+      const preview = calculateResolutionPreview(market, winner, outcomeKnownAt);
+      const cutoffOutput = document.querySelector("#resolution-cutoff-preview");
+      const eligibleOutput = document.querySelector("#resolution-eligible-preview");
+      const winningOutput = document.querySelector("#resolution-winning-preview");
+      const lateOutput = document.querySelector("#resolution-late-preview");
+      const refundOutput = document.querySelector("#resolution-refund-preview");
+      if (cutoffOutput) cutoffOutput.textContent = formatDateTime(preview.eligibilityCutoff);
+      if (eligibleOutput) {
+        eligibleOutput.textContent = `${preview.eligiblePredictionCount} · ${formatNumber(preview.eligiblePool)} pts`;
+      }
+      if (winningOutput) winningOutput.textContent = `${formatNumber(preview.winningPool)} pts`;
+      if (lateOutput) {
+        lateOutput.textContent = `${preview.latePredictionCount} · ${formatNumber(preview.lateRefundTotal)} pts`;
+      }
+      if (refundOutput) {
+        refundOutput.textContent = preview.noWinnerRefund
+          ? "Nobody backed this outcome before the cutoff, so every point that counted will be refunded."
+          : "";
+      }
+    };
+    outcomeKnownField?.addEventListener("input", updateResolutionPreview);
+    document.querySelectorAll('input[name="winner"]').forEach((input) => {
+      input.addEventListener("change", updateResolutionPreview);
+    });
+    updateResolutionPreview();
+
     document.querySelector("#resolve-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(event.currentTarget);
       const winner = Number(formData.get("winner"));
       const resolutionNote = String(formData.get("resolutionNote") || "").trim();
+      const outcomeKnownAt = new Date(String(formData.get("outcomeKnownAt") || ""));
+      const resolutionSourceUrl = String(formData.get("resolutionSourceUrl") || "").trim();
       const resolutionNoteField = event.currentTarget.querySelector("#resolution-note");
       const button = event.currentTarget.querySelector("button[type='submit']");
       const winningOutcome = market.outcomes.find((outcome) => outcome.id === winner);
 
       if (!resolutionNote) {
-        showToast("Add a resolution note before resolving the market.", "error");
+        showToast("Add a result note before resolving the market.", "error");
         resolutionNoteField?.focus();
+        return;
+      }
+
+      if (Number.isNaN(outcomeKnownAt.getTime()) || outcomeKnownAt.getTime() > Date.now()) {
+        showToast("Enter when the outcome became known. It cannot be in the future.", "error");
+        outcomeKnownField?.focus();
+        return;
+      }
+
+      if (resolutionSourceUrl && !/^https?:\/\//i.test(resolutionSourceUrl)) {
+        showToast("Enter a complete http or https source link.", "error");
+        document.querySelector("#resolution-source-url")?.focus();
         return;
       }
 
@@ -3529,6 +3996,8 @@
         p_market_id: market.id,
         p_winning_outcome_id: winner,
         p_resolution_note: resolutionNote,
+        p_outcome_known_at: outcomeKnownAt.toISOString(),
+        p_resolution_source_url: resolutionSourceUrl || null,
       });
       setButtonLoading(button, false);
 
@@ -3542,7 +4011,9 @@
       showToast(
         data?.refunded
           ? `“${winningOutcome?.label}” won, but nobody backed it. Everyone was refunded.`
-          : `Market resolved: “${winningOutcome?.label}.” The fake fortunes have been distributed.`,
+          : data?.late_prediction_count
+            ? `Market resolved: “${winningOutcome?.label}.” ${data.late_prediction_count} late ${pluralize(data.late_prediction_count, "prediction")} refunded.`
+            : `Market resolved: “${winningOutcome?.label}.” The fake fortunes have been distributed.`,
         "success",
       );
     });
@@ -3550,6 +4021,10 @@
 
   function openEditMarketModal(market) {
     if (!state.profile?.is_admin || market.status !== "open") return;
+    const currentCloseMode = market.closeMode || market.close_mode || "date";
+    const editCloseValue = toLocalDateTimeInput(
+      market.closes_at ? new Date(market.closes_at) : new Date(Date.now() + 24 * 60 * 60 * 1000),
+    );
 
     openModal(`
       <div class="modal-header">
@@ -3588,13 +4063,21 @@
               </div>
             </div>
             <div class="form-field form-field-full">
+              <label for="edit-market-close-mode">Closing rule</label>
+              <select id="edit-market-close-mode" name="closeMode">
+                <option value="date"${currentCloseMode === "date" ? " selected" : ""}>Open until date</option>
+                <option value="outcome"${currentCloseMode === "outcome" ? " selected" : ""}>Open until outcome</option>
+              </select>
+              <small>Changing a closed market to open until outcome reopens it immediately.</small>
+            </div>
+            <div class="form-field form-field-full${currentCloseMode === "outcome" ? " hidden" : ""}" id="edit-scheduled-close-field">
               <label for="edit-market-closes">Predictions close</label>
               <input
                 id="edit-market-closes"
                 name="closesAt"
                 type="datetime-local"
-                value="${toLocalDateTimeInput(new Date(market.closes_at))}"
-                required
+                value="${editCloseValue}"
+                ${currentCloseMode === "date" ? "required" : "disabled"}
               />
               <small>The corrected closing time must still be in the future.</small>
             </div>
@@ -3612,12 +4095,29 @@
 
     bindCharacterCounter("edit-market-description", "edit-market-description-count");
 
+    const editCloseMode = document.querySelector("#edit-market-close-mode");
+    const editScheduledCloseField = document.querySelector("#edit-scheduled-close-field");
+    const editScheduledCloseInput = document.querySelector("#edit-market-closes");
+    const updateEditCloseMode = () => {
+      const usesDate = editCloseMode?.value !== "outcome";
+      editScheduledCloseField?.classList.toggle("hidden", !usesDate);
+      if (editScheduledCloseInput) {
+        editScheduledCloseInput.required = usesDate;
+        editScheduledCloseInput.disabled = !usesDate;
+      }
+    };
+    editCloseMode?.addEventListener("change", updateEditCloseMode);
+    updateEditCloseMode();
+
     document.querySelector("#edit-market-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const question = String(form.get("question") || "").trim();
       const description = String(form.get("description") || "").trim();
-      const closesAt = new Date(String(form.get("closesAt") || ""));
+      const closeMode = String(form.get("closeMode") || "date");
+      const closesAt = closeMode === "date"
+        ? new Date(String(form.get("closesAt") || ""))
+        : null;
       const button = event.currentTarget.querySelector("button[type='submit']");
 
       if (question.length < 5 || question.length > 180) {
@@ -3625,7 +4125,10 @@
         return;
       }
 
-      if (Number.isNaN(closesAt.getTime()) || closesAt.getTime() <= Date.now()) {
+      if (
+        closeMode === "date" &&
+        (Number.isNaN(closesAt.getTime()) || closesAt.getTime() <= Date.now())
+      ) {
         showToast("Choose a corrected closing time in the future.", "error");
         return;
       }
@@ -3635,7 +4138,8 @@
         p_market_id: market.id,
         p_question: question,
         p_description: description || null,
-        p_closes_at: closesAt.toISOString(),
+        p_close_mode: closeMode,
+        p_closes_at: closesAt ? closesAt.toISOString() : null,
       });
       setButtonLoading(button, false);
 
