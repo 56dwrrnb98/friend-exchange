@@ -130,6 +130,7 @@
     leaderboardSortDirection: "desc",
     oddsHistoryMarketId: null,
     oddsHistoryOutcomeId: null,
+    selectedOutcomeByMarket: new Map(),
     lastRenderedMarketOdds: new Map(),
     loading: false,
     realtimeChannel: null,
@@ -492,6 +493,7 @@
     state.leaderboardSortDirection = "desc";
     state.oddsHistoryMarketId = null;
     state.oddsHistoryOutcomeId = null;
+    state.selectedOutcomeByMarket = new Map();
     state.lastRenderedMarketOdds = new Map();
     state.loading = false;
     closeModal({ acknowledgeAllowance: false });
@@ -2014,6 +2016,14 @@
     const canVoid = canManage && market.status === "open";
     const hasMarketControls =
       canEdit || canResolve || canVoid || canArchive || canRestore || canDelete;
+    const storedSelectedOutcomeId = state.selectedOutcomeByMarket.get(market.id);
+    const selectedOutcome = canPredict
+      ? market.outcomes.find((outcome) => outcome.id === storedSelectedOutcomeId)
+      : null;
+    if (!selectedOutcome && storedSelectedOutcomeId !== undefined) {
+      state.selectedOutcomeByMarket.delete(market.id);
+    }
+    const selectedOutcomeId = selectedOutcome?.id || null;
     const userPredictions = market.officialPredictions.filter((prediction) => prediction.user_id === state.user.id);
     const userCommitted = userPredictions.reduce((sum, prediction) => sum + prediction.amount, 0);
     const sortedOutcomes = [...market.outcomes].sort((a, b) => b.percent - a.percent);
@@ -2058,8 +2068,10 @@
           <section class="panel">
             <div class="panel-heading">
               <div>
-                <h2>${market.displayStatus === "resolved" ? "Final results" : "Community odds"}</h2>
-                <p>Display odds include ${market.outcomes[0]?.seed_points || 25} seed points per outcome. Payouts use real predictions only.</p>
+                <h2>${market.displayStatus === "resolved" ? "Final results" : canPredict ? "Back an outcome" : "Community odds"}</h2>
+                <p>${canPredict
+                  ? `Select an outcome to continue. Display odds include ${market.outcomes[0]?.seed_points || 25} seed points per outcome; payouts use real predictions only.`
+                  : `Display odds include ${market.outcomes[0]?.seed_points || 25} seed points per outcome. Payouts use real predictions only.`}</p>
               </div>
               <div class="panel-heading-actions">
                 ${statusPill(market.archived_at ? "archived" : market.displayStatus)}
@@ -2079,7 +2091,7 @@
             </div>
 
             ${renderLiveOddsAnnouncement(liveChanges, market)}
-            <div class="outcome-list">
+            <div class="outcome-list"${canPredict ? ' role="radiogroup" aria-label="Choose an outcome to back"' : ""}>
               ${sortedOutcomes
                 .map((outcome) =>
                   renderOutcomeCard(
@@ -2088,10 +2100,21 @@
                     canPredict,
                     movementByOutcome.get(outcome.id),
                     liveChanges.get(outcome.id),
+                    selectedOutcomeId,
                   ),
                 )
                 .join("")}
             </div>
+            ${canPredict ? `
+              <div class="outcome-selection-action">
+                <button
+                  class="button button-primary"
+                  id="back-selected-outcome"
+                  type="button"
+                  ${selectedOutcome ? "" : "disabled"}
+                >${selectedOutcome ? `Back ${escapeHtml(selectedOutcome.label)}` : "Choose an outcome"}</button>
+              </div>
+            ` : ""}
             ${isOddsHistoryExpanded ? renderOddsHistoryChart(market, oddsTimeline) : ""}
           </section>
 
@@ -2188,8 +2211,31 @@
       state.lastRenderedMarketOdds.set(outcome.id, outcome.percent);
     });
 
-    document.querySelectorAll("[data-predict-outcome]").forEach((button) => {
-      button.addEventListener("click", () => openPredictionModal(market, Number(button.dataset.predictOutcome)));
+    document.querySelectorAll("[data-select-outcome]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const outcomeId = Number(input.dataset.selectOutcome);
+        const outcome = market.outcomes.find((item) => item.id === outcomeId);
+        if (!outcome) return;
+
+        state.selectedOutcomeByMarket.set(market.id, outcome.id);
+        document.querySelectorAll("[data-outcome-card]").forEach((card) => {
+          card.classList.toggle(
+            "is-selected",
+            Number(card.dataset.outcomeCard) === outcome.id,
+          );
+        });
+
+        const action = document.querySelector("#back-selected-outcome");
+        if (action) {
+          action.disabled = false;
+          action.textContent = `Back ${outcome.label}`;
+        }
+      });
+    });
+    document.querySelector("#back-selected-outcome")?.addEventListener("click", () => {
+      const outcomeId = state.selectedOutcomeByMarket.get(market.id);
+      if (!market.outcomes.some((outcome) => outcome.id === outcomeId)) return;
+      openPredictionModal(market, outcomeId);
     });
 
     document.querySelector("#edit-market")?.addEventListener("click", () => openEditMarketModal(market));
@@ -2262,8 +2308,16 @@
     );
   }
 
-  function renderOutcomeCard(outcome, market, canPredict, movement, liveChange) {
+  function renderOutcomeCard(
+    outcome,
+    market,
+    canPredict,
+    movement,
+    liveChange,
+    selectedOutcomeId = null,
+  ) {
     const isWinner = market.winning_outcome_id === outcome.id;
+    const isSelected = canPredict && selectedOutcomeId === outcome.id;
     const userAmount = (market.officialPredictions || market.predictions)
       .filter((prediction) => prediction.user_id === state.user.id && prediction.outcome_id === outcome.id)
       .reduce((sum, prediction) => sum + prediction.amount, 0);
@@ -2281,31 +2335,40 @@
       ? `--odds-from:${clamp(liveChange.fromPercent, 0, 100)}%;--odds-to:${clamp(outcome.percent, 0, 100)}%;width:${clamp(outcome.percent, 0, 100)}%`
       : `width:${clamp(outcome.percent, 0, 100)}%`;
 
+    const cardTag = canPredict ? "label" : "article";
+
     return `
-      <article class="outcome-card ${isWinner ? "winner" : ""}${liveMovementClass}">
-        <div class="outcome-card-leading">
-          <div class="outcome-name-line">
+      <${cardTag}
+        class="outcome-card${canPredict ? " outcome-card-selectable" : ""}${isSelected ? " is-selected" : ""}${isWinner ? " winner" : ""}${liveMovementClass}"
+        ${canPredict ? `data-outcome-card="${outcome.id}"` : ""}
+      >
+        ${canPredict ? `
+          <input
+            class="outcome-choice-input visually-hidden"
+            data-select-outcome="${outcome.id}"
+            name="market-outcome-${market.id}"
+            type="radio"
+            value="${outcome.id}"
+            aria-label="Back ${escapeAttribute(outcome.label)}"
+            ${isSelected ? "checked" : ""}
+          />
+        ` : ""}
+        <span class="outcome-card-leading">
+          <span class="outcome-name-line">
             <span class="outcome-name">${escapeHtml(outcome.label)}</span>
             ${isWinner ? '<span class="tiny-pill">Winner</span>' : ""}
-            ${userAmount ? `<span class="tiny-pill">You: ${formatNumber(userAmount)}</span>` : ""}
-          </div>
-          <div class="odds-track" aria-hidden="true">
-            <div class="odds-fill ${hasLiveChange ? "is-live-updated" : ""}" style="${oddsStyle}"></div>
-          </div>
-        </div>
-        <div class="outcome-numbers">
+          </span>
+          ${userAmount ? `<span class="outcome-user-position">Your position · ${formatNumber(userAmount)} pts</span>` : ""}
+          <span class="odds-track" aria-hidden="true">
+            <span class="odds-fill ${hasLiveChange ? "is-live-updated" : ""}" style="${oddsStyle}"></span>
+          </span>
+        </span>
+        <span class="outcome-numbers">
           <strong class="${hasLiveChange ? "is-live-updated" : ""}">${formatPercent(outcome.percent)}</strong>
           ${renderOutcomeMovement(outcomeMovement)}
-          <small>${formatNumber(outcome.actualPoints)} real pts</small>
-        </div>
-        ${canPredict ? `
-          <div class="outcome-action">
-            <button class="button button-secondary button-small" data-predict-outcome="${outcome.id}" type="button">
-              Back this outcome
-            </button>
-          </div>
-        ` : ""}
-      </article>
+          <small>${formatNumber(outcome.actualPoints)} pts</small>
+        </span>
+      </${cardTag}>
     `;
   }
 
@@ -3792,6 +3855,7 @@
         return;
       }
 
+      state.selectedOutcomeByMarket.delete(market.id);
       closeModal();
       await refreshData({ quiet: true });
       showToast(`${formatNumber(amount)} points committed to “${outcome.label}.”`, "success");
