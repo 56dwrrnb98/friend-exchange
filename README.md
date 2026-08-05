@@ -172,7 +172,7 @@ Examples:
 
 ```text
 http://localhost:8000/
-https://YOUR-GITHUB-NAME.github.io/friend-exchange/
+https://friendexchange.github.io/
 ```
 
 Use the actual address shown in your browser. Password-recovery links return to
@@ -260,13 +260,15 @@ The browser requires these files:
 
 To publish with GitHub Pages:
 
-1. Create a GitHub repository containing the application files.
-2. Commit the files to the `main` branch.
-3. Open the repository's **Settings → Pages**.
-4. Under **Build and deployment**, select **Deploy from a branch**.
-5. Choose the `main` branch and `/ (root)` folder.
-6. Save the settings.
-7. Add the published URL to Supabase's **Site URL** and **Redirect URLs**.
+1. Use the GitHub account named `friendexchange`.
+2. Name the repository `friendexchange.github.io`.
+3. Commit the application files to the `main` branch.
+4. Open the repository's **Settings → Pages**.
+5. Under **Build and deployment**, select **Deploy from a branch**.
+6. Choose the `main` branch and `/ (root)` folder.
+7. Save the settings and verify `https://friendexchange.github.io/` loads.
+8. Set Supabase's **Site URL** to that address and add the exact address under
+   **Redirect URLs**.
 
 See the [GitHub Pages publishing
 documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source)
@@ -280,7 +282,7 @@ site URL itself can be shared freely.
 # Project files
 
 ```text
-friend-exchange/
+friendexchange.github.io/
 ├── index.html         Application structure and account screens
 ├── styles.css         Responsive visual design
 ├── app.js             Front-end behavior and Supabase calls
