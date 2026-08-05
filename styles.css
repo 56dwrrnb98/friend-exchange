@@ -637,9 +637,9 @@ textarea::placeholder {
   position: absolute;
   width: 360px;
   height: 360px;
-  right: -80px;
-  top: -170px;
-  border: 56px solid var(--mint);
+  right: -190px;
+  top: -250px;
+  border: 125px solid var(--mint);
   border-radius: 50%;
   opacity: 0.25;
   filter: blur(1em);
@@ -817,6 +817,11 @@ textarea::placeholder {
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .status-open {
@@ -2966,11 +2971,15 @@ textarea::placeholder {
   }
 
   .hero::after {
-    right: -170px;
+    width: 280px;
+    height: 280px;
+    top: -140px;
+    right: -190px;
+    border-width: 80px;
   }
 
   .hero-stats {
-    grid-template-columns: repeat(2, 1fr);
+    display: none;
   }
 
   .market-grid,
