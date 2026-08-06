@@ -36,7 +36,7 @@ There is no build step, package manager, framework, or custom server.
 - Permanent resolution notes
 - Administrator controls for invitations, point adjustments, early resolution,
   voiding, corrections, and archiving
-- Activity, leaderboard, market history, and personal portfolio views
+- Cross-market and per-market activity, leaderboard, market history, and personal portfolio views
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile layouts
 

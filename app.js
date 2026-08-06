@@ -123,6 +123,7 @@
     predictions: [],
     payouts: [],
     marketFilter: "active",
+    activityExpanded: false,
     portfolioFilter: "all",
     portfolioSortKey: "default",
     portfolioSortDirection: "desc",
@@ -486,6 +487,7 @@
     state.predictions = [];
     state.payouts = [];
     state.marketFilter = "active";
+    state.activityExpanded = false;
     state.portfolioFilter = "all";
     state.portfolioSortKey = "default";
     state.portfolioSortDirection = "desc";
@@ -1817,6 +1819,609 @@
     `;
   }
 
+  const ACTIVITY_DESKTOP_LIMIT = 8;
+  const ACTIVITY_MOBILE_LIMIT = 3;
+  const ACTIVITY_EXPANDED_LIMIT = 20;
+  const ACTIVITY_CLOSE_RESOLUTION_GAP = 5 * 60 * 1000;
+  const JOINED_ACTIVITY_SUMMARIES = Object.freeze([
+    "A new source of market volatility has arrived",
+    "The exchange welcomes another unlicensed expert",
+    "Now authorized to be publicly wrong",
+    "1,000 points of fictional capital issued",
+    "Account opened with 1,000 imaginary points",
+  ]);
+
+  function getJoinedActivitySummary(profile) {
+    const key = String(profile?.id || profile?.created_at || "new-trader");
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) {
+      hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+    }
+    return JOINED_ACTIVITY_SUMMARIES[hash % JOINED_ACTIVITY_SUMMARIES.length];
+  }
+
+  function getVisibleActivityMarkets(allMarkets) {
+    return allMarkets.filter((market) => {
+      if (!market.archived_at) return true;
+      return (
+        state.profile.is_admin ||
+        market.predictions.some(
+          (prediction) => prediction.user_id === state.user.id,
+        )
+      );
+    });
+  }
+
+  function getLeadingOutcomeIds(odds) {
+    const entries = [...odds.entries()];
+    if (!entries.length) return [];
+    const highest = Math.max(...entries.map(([, percent]) => Number(percent || 0)));
+    return entries
+      .filter(([, percent]) => Math.abs(Number(percent || 0) - highest) < 0.0001)
+      .map(([outcomeId]) => outcomeId);
+  }
+
+  function buildPredictionActivityEvents(market) {
+    const predictions = sortMarketPredictions(market.predictions || []);
+    const officialPredictionSet = new Set(
+      market.officialPredictions || market.predictions || [],
+    );
+    const historyEventByPrediction = new Map(
+      buildMarketOddsTimeline(market).events.map((event) => [event.prediction, event]),
+    );
+    const userOutcomes = new Map();
+    const positionTotals = new Map();
+    const outcomeTotals = new Map(
+      market.outcomes.map((outcome) => [outcome.id, 0]),
+    );
+    let poolTotal = 0;
+
+    return predictions
+      .map((prediction) => {
+        const timestamp = getTimestamp(prediction.created_at);
+        if (!Number.isFinite(timestamp)) return null;
+
+        const profile = state.profiles.find(
+          (item) => item.id === prediction.user_id,
+        );
+        const outcome = market.outcomes.find(
+          (item) => item.id === prediction.outcome_id,
+        );
+        const seenOutcomes = userOutcomes.get(prediction.user_id) || new Set();
+        const alreadyBackedOutcome = seenOutcomes.has(prediction.outcome_id);
+        const alreadyBackedMarket = seenOutcomes.size > 0;
+        const actionKind = alreadyBackedOutcome
+          ? "added"
+          : alreadyBackedMarket
+            ? "also-backed"
+            : "backed";
+
+        seenOutcomes.add(prediction.outcome_id);
+        userOutcomes.set(prediction.user_id, seenOutcomes);
+
+        const positionKey = `${prediction.user_id}:${market.id}:${prediction.outcome_id}`;
+        const positionAfter =
+          Number(positionTotals.get(positionKey) || 0) +
+          Number(prediction.amount || 0);
+        positionTotals.set(positionKey, positionAfter);
+
+        const late = isLatePrediction(prediction, market);
+        const official = officialPredictionSet.has(prediction);
+        const insights = [];
+        let summary = "";
+        let tone = "";
+
+        if (market.status === "void") {
+          summary = `Market voided · ${formatNumber(prediction.amount)} pts refunded`;
+          tone = "refund";
+        } else if (late) {
+          summary = `Didn’t count · Submitted after the outcome was known · ${formatNumber(prediction.amount)} pts refunded`;
+          tone = "refund";
+        } else if (official) {
+          const outcomeTotalBefore = Number(
+            outcomeTotals.get(prediction.outcome_id) || 0,
+          );
+          const poolBefore = poolTotal;
+          const historyEvent = historyEventByPrediction.get(prediction);
+
+          if (historyEvent) {
+            const leadersBefore = getLeadingOutcomeIds(historyEvent.beforeOdds);
+            const leadersAfter = getLeadingOutcomeIds(historyEvent.afterOdds);
+            const tookLead =
+              leadersAfter.length === 1 &&
+              leadersAfter[0] === prediction.outcome_id &&
+              !(leadersBefore.length === 1 && leadersBefore[0] === prediction.outcome_id);
+
+            if (tookLead) {
+              insights.push(`${outcome?.label || "Outcome"} took the lead`);
+            } else if (outcomeTotalBefore === 0) {
+              insights.push(`First points committed to ${outcome?.label || "this outcome"}`);
+            } else if (Math.abs(historyEvent.delta) >= 10) {
+              insights.push(
+                `Community odds ${formatPercent(historyEvent.fromPercent)} → ${formatPercent(historyEvent.toPercent)}`,
+              );
+            }
+          }
+
+          poolTotal += Number(prediction.amount || 0);
+          outcomeTotals.set(
+            prediction.outcome_id,
+            outcomeTotalBefore + Number(prediction.amount || 0),
+          );
+
+          if (poolBefore < 1000 && poolTotal >= 1000) {
+            insights.unshift("The pool crossed 1,000 pts");
+          }
+        }
+
+        return {
+          id: `prediction:${prediction.id || `${market.id}:${timestamp}`}`,
+          type: "prediction",
+          timestamp,
+          timestampIso: prediction.created_at,
+          actor: profile || null,
+          market,
+          outcome,
+          prediction,
+          actionKind,
+          positionKey,
+          positionAfter,
+          isEligiblePosition: official && !late && market.status !== "void",
+          summary,
+          insights,
+          tone,
+          sortPriority: 40,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function getActivityLeaderSnapshot(metricsByUser) {
+    const rows = state.profiles.map((profile) => {
+      const metrics = metricsByUser.get(profile.id) || {
+        profitLoss: 0,
+        resolvedCommitted: 0,
+      };
+      return {
+        profile,
+        profitLoss: metrics.profitLoss,
+        resolvedCommitted: metrics.resolvedCommitted,
+        realizedReturn: metrics.resolvedCommitted > 0
+          ? metrics.profitLoss / metrics.resolvedCommitted
+          : null,
+      };
+    });
+    if (!rows.length) return { ids: new Set(), rows: [] };
+
+    const compare = (a, b) => {
+      if (a.profitLoss !== b.profitLoss) return b.profitLoss - a.profitLoss;
+      if (a.realizedReturn === null && b.realizedReturn !== null) return 1;
+      if (a.realizedReturn !== null && b.realizedReturn === null) return -1;
+      if (a.realizedReturn !== b.realizedReturn) {
+        return (b.realizedReturn ?? 0) - (a.realizedReturn ?? 0);
+      }
+      return b.resolvedCommitted - a.resolvedCommitted;
+    };
+    const sorted = [...rows].sort(compare);
+    const leader = sorted[0];
+    const leaders = sorted.filter(
+      (row) =>
+        row.profitLoss === leader.profitLoss &&
+        row.realizedReturn === leader.realizedReturn &&
+        row.resolvedCommitted === leader.resolvedCommitted,
+    );
+
+    return {
+      ids: new Set(leaders.map((row) => row.profile.id)),
+      rows: leaders,
+    };
+  }
+
+  function activityLeaderSetsMatch(first, second) {
+    return (
+      first.size === second.size &&
+      [...first].every((value) => second.has(value))
+    );
+  }
+
+  function addRobberBaronHighlights(events, markets) {
+    const resultEventByMarket = new Map(
+      events
+        .filter((event) => event.type === "resolved")
+        .map((event) => [event.market.id, event]),
+    );
+    const resolvedMarkets = markets
+      .filter(
+        (market) =>
+          market.status === "resolved" &&
+          Number.isFinite(getTimestamp(market.resolved_at)),
+      )
+      .sort((a, b) => {
+        const timeDifference =
+          getTimestamp(a.resolved_at, 0) - getTimestamp(b.resolved_at, 0);
+        return timeDifference || Number(a.id || 0) - Number(b.id || 0);
+      });
+    const metricsByUser = new Map();
+    let previousLeaders = getActivityLeaderSnapshot(metricsByUser);
+
+    resolvedMarkets.forEach((market) => {
+      const committedByUser = new Map();
+      (market.officialPredictions || []).forEach((prediction) => {
+        committedByUser.set(
+          prediction.user_id,
+          Number(committedByUser.get(prediction.user_id) || 0) +
+            Number(prediction.amount || 0),
+        );
+      });
+      const payoutByUser = new Map();
+      state.payouts
+        .filter(
+          (payout) =>
+            payout.market_id === market.id && payout.kind !== "late_refund",
+        )
+        .forEach((payout) => {
+          payoutByUser.set(
+            payout.user_id,
+            Number(payoutByUser.get(payout.user_id) || 0) +
+              Number(payout.amount || 0),
+          );
+        });
+      const affectedUsers = new Set([
+        ...committedByUser.keys(),
+        ...payoutByUser.keys(),
+      ]);
+
+      affectedUsers.forEach((userId) => {
+        const previous = metricsByUser.get(userId) || {
+          profitLoss: 0,
+          resolvedCommitted: 0,
+        };
+        const committed = Number(committedByUser.get(userId) || 0);
+        const payout = Number(payoutByUser.get(userId) || 0);
+        metricsByUser.set(userId, {
+          profitLoss: previous.profitLoss + payout - committed,
+          resolvedCommitted: previous.resolvedCommitted + committed,
+        });
+      });
+
+      const nextLeaders = getActivityLeaderSnapshot(metricsByUser);
+      const resultEvent = resultEventByMarket.get(market.id);
+      if (
+        resultEvent &&
+        !activityLeaderSetsMatch(previousLeaders.ids, nextLeaders.ids) &&
+        nextLeaders.rows.length
+      ) {
+        if (nextLeaders.rows.length === 1) {
+          const leader = nextLeaders.rows[0];
+          const wasAlreadyLeading = previousLeaders.ids.has(leader.profile.id);
+          resultEvent.insights.push(
+            `${leader.profile.display_name} ${wasAlreadyLeading ? "is now the sole" : "is the new"} robber baron · ${leader.profitLoss > 0 ? "+" : ""}${formatNumber(leader.profitLoss)} pts profit / loss`,
+          );
+        } else {
+          const names = nextLeaders.rows
+            .map((row) => row.profile.display_name)
+            .sort((a, b) => a.localeCompare(b));
+          const leaderLabel = names.length > 2
+            ? `${names.length}-way tie`
+            : names.join(" & ");
+          resultEvent.insights.push(
+            `${leaderLabel} for robber baron · ${nextLeaders.rows[0].profitLoss > 0 ? "+" : ""}${formatNumber(nextLeaders.rows[0].profitLoss)} pts profit / loss`,
+          );
+        }
+      }
+
+      previousLeaders = nextLeaders;
+    });
+  }
+
+  function markLargestPositionActivity(events) {
+    const eligiblePositions = events.filter(
+      (event) => event.type === "prediction" && event.isEligiblePosition,
+    );
+    const largestPosition = eligiblePositions.length
+      ? Math.max(...eligiblePositions.map((event) => event.positionAfter))
+      : 0;
+    if (largestPosition <= 0) return;
+
+    eligiblePositions
+      .filter((event) => event.positionAfter === largestPosition)
+      .forEach((event) => {
+        event.insights.unshift(
+          `Exchange’s largest position · ${formatNumber(largestPosition)} pts total`,
+        );
+      });
+  }
+
+  function buildExchangeActivityEvents(allMarkets = getAllMarkets()) {
+    const markets = getVisibleActivityMarkets(allMarkets);
+    const events = [];
+    const now = Date.now();
+
+    state.profiles.forEach((profile) => {
+      const timestamp = getTimestamp(profile.created_at);
+      if (!Number.isFinite(timestamp)) return;
+      events.push({
+        id: `joined:${profile.id}`,
+        type: "joined",
+        timestamp,
+        timestampIso: profile.created_at,
+        actor: profile,
+        summary: getJoinedActivitySummary(profile),
+        insights: [],
+        sortPriority: 10,
+      });
+    });
+
+    markets.forEach((market) => {
+      const createdAt = getTimestamp(market.created_at);
+      if (Number.isFinite(createdAt)) {
+        const closeSummary = market.closeMode === "outcome"
+          ? "Open until the result is known"
+          : Number.isFinite(getTimestamp(market.closes_at))
+            ? `Scheduled close · ${formatDateTime(market.closes_at)}`
+            : "Predictions opened";
+        events.push({
+          id: `opened:${market.id}`,
+          type: "opened",
+          timestamp: createdAt,
+          timestampIso: market.created_at,
+          actor: market.creator || null,
+          market,
+          summary: closeSummary,
+          insights: [],
+          sortPriority: 20,
+        });
+      }
+
+      events.push(...buildPredictionActivityEvents(market));
+
+      const resolvedAt = getTimestamp(market.resolved_at);
+      const closeAt = market.status === "resolved"
+        ? getTimestamp(market.eligibility_cutoff_at, getTimestamp(market.closes_at))
+        : getTimestamp(market.closes_at);
+      const closeIsSeparate =
+        !Number.isFinite(resolvedAt) ||
+        Math.abs(resolvedAt - closeAt) >= ACTIVITY_CLOSE_RESOLUTION_GAP;
+      if (
+        market.closeMode === "date" &&
+        Number.isFinite(closeAt) &&
+        closeAt <= now &&
+        closeIsSeparate
+      ) {
+        const eligibleAtClose = (market.predictions || []).filter(
+          (prediction) => getTimestamp(prediction.created_at, Infinity) < closeAt,
+        );
+        const closePool = eligibleAtClose.reduce(
+          (sum, prediction) => sum + Number(prediction.amount || 0),
+          0,
+        );
+        const closeParticipants = new Set(
+          eligibleAtClose.map((prediction) => prediction.user_id),
+        ).size;
+        const closeSummary = closePool > 0
+          ? `${formatNumber(closePool)} pts committed by ${closeParticipants} ${pluralize(closeParticipants, "trader")}${market.displayStatus === "closed" ? " · Awaiting reality" : ""}`
+          : `No points were committed${market.displayStatus === "closed" ? " · Awaiting reality" : ""}`;
+        events.push({
+          id: `closed:${market.id}`,
+          type: "closed",
+          timestamp: closeAt,
+          timestampIso: new Date(closeAt).toISOString(),
+          actor: null,
+          market,
+          summary: closeSummary,
+          insights: [],
+          sortPriority: 30,
+        });
+      }
+
+      if (market.status === "resolved" && Number.isFinite(resolvedAt)) {
+        const winnerPayouts = state.payouts.filter(
+          (payout) => payout.market_id === market.id && payout.kind === "winner",
+        );
+        const noWinnerRefunds = state.payouts.filter(
+          (payout) =>
+            payout.market_id === market.id && payout.kind === "no_winner_refund",
+        );
+        const payoutTotal = winnerPayouts.reduce(
+          (sum, payout) => sum + Number(payout.amount || 0),
+          0,
+        );
+        const refundTotal = noWinnerRefunds.reduce(
+          (sum, payout) => sum + Number(payout.amount || 0),
+          0,
+        );
+        let resultSummary;
+        if (market.actualTotal === 0) {
+          resultSummary = "No points were committed. Reality proceeded anyway.";
+        } else if (!market.winner || Number(market.winner.actualPoints || 0) === 0) {
+          resultSummary = `Nobody backed it · ${formatNumber(refundTotal || market.actualTotal)} pts refunded`;
+        } else if (winnerPayouts.length === 1) {
+          const recipient = state.profiles.find(
+            (profile) => profile.id === winnerPayouts[0].user_id,
+          );
+          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed to ${recipient?.display_name || "1 trader"}`;
+        } else {
+          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed among ${winnerPayouts.length} ${pluralize(winnerPayouts.length, "trader")}`;
+        }
+        const insights = market.lateTotal > 0
+          ? [`${formatNumber(market.lateTotal)} late pts refunded`]
+          : [];
+        events.push({
+          id: `resolved:${market.id}`,
+          type: "resolved",
+          timestamp: resolvedAt,
+          timestampIso: market.resolved_at,
+          actor: market.resolver || null,
+          market,
+          outcome: market.winner || null,
+          summary: resultSummary,
+          insights,
+          sortPriority: 60,
+        });
+      }
+
+      if (market.status === "void" && Number.isFinite(resolvedAt)) {
+        const voidRefunds = state.payouts.filter(
+          (payout) => payout.market_id === market.id && payout.kind === "void_refund",
+        );
+        const refundTotal = voidRefunds.reduce(
+          (sum, payout) => sum + Number(payout.amount || 0),
+          0,
+        );
+        const voidSummary = refundTotal > 0
+          ? `${formatNumber(refundTotal)} pts refunded to ${voidRefunds.length} ${pluralize(voidRefunds.length, "trader")}`
+          : "No points required refunding";
+        events.push({
+          id: `void:${market.id}`,
+          type: "void",
+          timestamp: resolvedAt,
+          timestampIso: market.resolved_at,
+          actor: null,
+          market,
+          summary: voidSummary,
+          insights: [],
+          tone: "refund",
+          sortPriority: 60,
+        });
+      }
+    });
+
+    markLargestPositionActivity(events);
+    addRobberBaronHighlights(events, markets);
+
+    return events.sort((a, b) => {
+      const timeDifference = b.timestamp - a.timestamp;
+      if (timeDifference !== 0) return timeDifference;
+      const priorityDifference = (b.sortPriority || 0) - (a.sortPriority || 0);
+      if (priorityDifference !== 0) return priorityDifference;
+      return String(b.id).localeCompare(String(a.id));
+    });
+  }
+
+  function renderExchangeActivityPrimary(event) {
+    const name = escapeHtml(event.actor?.display_name || "Unknown trader");
+    const outcome = escapeHtml(event.outcome?.label || "an outcome");
+
+    switch (event.type) {
+      case "prediction":
+        if (event.actionKind === "added") {
+          return `<strong>${name}</strong><span> added more to </span><strong>${outcome}</strong><span> </span><span class="exchange-activity-amount" aria-hidden="true">(${formatNumber(event.prediction.amount)})</span><span class="visually-hidden"> (${formatNumber(event.prediction.amount)} points)</span>`;
+        }
+        if (event.actionKind === "also-backed") {
+          return `<strong>${name}</strong><span> also backed </span><strong>${outcome}</strong><span> </span><span class="exchange-activity-amount" aria-hidden="true">(${formatNumber(event.prediction.amount)})</span><span class="visually-hidden"> (${formatNumber(event.prediction.amount)} points)</span>`;
+        }
+        return `<strong>${name}</strong><span> backed </span><strong>${outcome}</strong><span> </span><span class="exchange-activity-amount" aria-hidden="true">(${formatNumber(event.prediction.amount)})</span><span class="visually-hidden"> (${formatNumber(event.prediction.amount)} points)</span>`;
+      case "opened":
+        return event.actor
+          ? `<strong>${name}</strong><span> opened a market</span>`
+          : "<strong>A market opened</strong>";
+      case "closed":
+        return "<strong>Predictions closed</strong>";
+      case "resolved":
+        return event.actor
+          ? `<strong>${name}</strong><span> made the result official: </span><strong>${outcome}</strong>`
+          : `<strong>Result made official: ${outcome}</strong>`;
+      case "void":
+        return "<strong>Market voided</strong>";
+      case "joined":
+        return `<strong>${name}</strong><span> entered the exchange</span>`;
+      default:
+        return "<strong>Exchange activity</strong>";
+    }
+  }
+
+  function renderExchangeActivityIcon(event) {
+    if (event.actor) return renderProfileAvatar(event.actor);
+    const icon = event.type === "closed"
+      ? "lock"
+      : event.type === "void"
+        ? "ban"
+        : "check";
+    return `
+      <span class="exchange-activity-system-icon" aria-hidden="true">
+        <i class="fa-solid fa-${icon}"></i>
+      </span>
+    `;
+  }
+
+  function renderExchangeActivityEvent(event, index) {
+    const tag = event.market ? "a" : "div";
+    const href = event.market ? ` href="#/market/${event.market.id}"` : "";
+    const details = [event.summary, ...(event.insights || [])]
+      .filter(Boolean)
+      .slice(0, 2);
+    const limitClasses = [
+      index >= ACTIVITY_MOBILE_LIMIT ? "is-after-mobile-limit" : "",
+      index >= ACTIVITY_DESKTOP_LIMIT ? "is-after-desktop-limit" : "",
+    ].filter(Boolean).join(" ");
+    return `
+      <${tag} class="exchange-activity-item${event.tone ? ` is-${event.tone}` : ""}${limitClasses ? ` ${limitClasses}` : ""}"${href}>
+        ${renderExchangeActivityIcon(event)}
+        <span class="exchange-activity-copy">
+          <span class="exchange-activity-primary">${renderExchangeActivityPrimary(event)}</span>
+          ${event.market ? `<span class="exchange-activity-market">${escapeHtml(event.market.question)}</span>` : ""}
+          ${details.map((detail) => `<span class="exchange-activity-detail">${escapeHtml(detail)}</span>`).join("")}
+          <time datetime="${escapeAttribute(event.timestampIso)}" title="${escapeAttribute(formatDateTime(event.timestampIso))}">${formatRelativeDate(event.timestampIso)}</time>
+        </span>
+      </${tag}>
+    `;
+  }
+
+  function renderExchangeActivityToggle(variant) {
+    return `
+      <button
+        class="exchange-activity-toggle exchange-activity-toggle-${variant}"
+        data-exchange-activity-toggle
+        type="button"
+        aria-expanded="${String(state.activityExpanded)}"
+      >${state.activityExpanded ? "Show less" : "Show more"}</button>
+    `;
+  }
+
+  function renderExchangeActivityPanel(events) {
+    const recentEvents = events.slice(0, ACTIVITY_EXPANDED_LIMIT);
+    const panelClasses = [
+      "exchange-activity-panel",
+      "panel",
+      state.activityExpanded ? "is-expanded" : "",
+      recentEvents.length > ACTIVITY_DESKTOP_LIMIT ? "has-desktop-overflow" : "",
+      recentEvents.length > ACTIVITY_MOBILE_LIMIT ? "has-mobile-overflow" : "",
+    ].filter(Boolean).join(" ");
+
+    return `
+      <aside class="${panelClasses}" aria-labelledby="exchange-activity-heading">
+        <div class="exchange-activity-heading">
+          <div>
+            <p class="eyebrow">Across the exchange</p>
+            <h2 id="exchange-activity-heading">Recent activity</h2>
+          </div>
+          <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+        </div>
+        <p class="exchange-activity-intro">
+          Fresh positions, official results, and other developments of zero economic importance.
+        </p>
+        ${recentEvents.length ? `
+          <div class="exchange-activity-list">
+            ${recentEvents.map((event, index) => `
+              ${index === ACTIVITY_MOBILE_LIMIT
+                ? renderExchangeActivityToggle("mobile")
+                : ""}
+              ${index === ACTIVITY_DESKTOP_LIMIT
+                ? renderExchangeActivityToggle("desktop")
+                : ""}
+              ${renderExchangeActivityEvent(event, index)}
+            `).join("")}
+          </div>
+        ` : `
+          <div class="exchange-activity-empty">
+            <strong>Quiet across the exchange.</strong>
+            <span>No positions or results to report.</span>
+          </div>
+        `}
+      </aside>
+    `;
+  }
+
   function renderMarkets() {
     const allMarkets = getAllMarkets();
     const markets = allMarkets.filter((market) => !market.archived_at);
@@ -1840,6 +2445,7 @@
     const userLivePositions = activeMarkets.filter((market) =>
       market.predictions.some((prediction) => prediction.user_id === state.user.id)
     ).length;
+    const activityEvents = buildExchangeActivityEvents(allMarkets);
 
     let filtered = markets;
     if (state.marketFilter === "active") filtered = activeMarkets;
@@ -1881,32 +2487,57 @@
         </div>
       </section>
 
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Community markets</p>
-          <h2>Trade on what happens next</h2>
+      <div class="markets-dashboard">
+        <div class="markets-browser">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Community markets</p>
+              <h2>Trade on what happens next</h2>
+            </div>
+          </div>
+
+          <div class="filter-row" role="group" aria-label="Filter markets">
+            ${filterButton("all", "All", markets.length)}
+            ${filterButton("active", "Active", activeMarkets.length)}
+            ${filterButton("resolved", "Resolved", resolvedMarkets.length)}
+            ${filterButton("void", "Voided", voidedMarkets.length)}
+            ${(state.profile.is_admin || archivedMarkets.length > 0)
+              ? filterButton("archived", "Archived", archivedMarkets.length)
+              : ""}
+          </div>
+
+          <section class="market-grid">
+            ${filtered.length ? filtered.map(renderMarketCard).join("") : renderNoMarkets(state.marketFilter)}
+          </section>
         </div>
+        ${renderExchangeActivityPanel(activityEvents)}
       </div>
-
-      <div class="filter-row" role="group" aria-label="Filter markets">
-        ${filterButton("all", "All", markets.length)}
-        ${filterButton("active", "Active", activeMarkets.length)}
-        ${filterButton("resolved", "Resolved", resolvedMarkets.length)}
-        ${filterButton("void", "Voided", voidedMarkets.length)}
-        ${(state.profile.is_admin || archivedMarkets.length > 0)
-          ? filterButton("archived", "Archived", archivedMarkets.length)
-          : ""}
-      </div>
-
-      <section class="market-grid">
-        ${filtered.length ? filtered.map(renderMarketCard).join("") : renderNoMarkets(state.marketFilter)}
-      </section>
     `;
 
     document.querySelectorAll("[data-market-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         state.marketFilter = button.dataset.marketFilter;
         renderMarkets();
+      });
+    });
+
+    document.querySelectorAll("[data-exchange-activity-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const scrollLeft = window.scrollX || 0;
+        const scrollTop = window.scrollY || 0;
+        state.activityExpanded = !state.activityExpanded;
+        const panel = button.closest(".exchange-activity-panel");
+        panel?.classList.toggle("is-expanded", state.activityExpanded);
+        panel?.querySelectorAll("[data-exchange-activity-toggle]").forEach((toggle) => {
+          toggle.setAttribute("aria-expanded", String(state.activityExpanded));
+          toggle.textContent = state.activityExpanded ? "Show less" : "Show more";
+        });
+
+        if (state.activityExpanded) {
+          const restoreScrollPosition = () => window.scrollTo(scrollLeft, scrollTop);
+          restoreScrollPosition();
+          window.requestAnimationFrame?.(restoreScrollPosition);
+        }
       });
     });
 
