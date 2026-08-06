@@ -4164,7 +4164,10 @@
           <h1>Exchange operations.</h1>
           <p>Approve the addresses permitted to establish an imaginary financial presence.</p>
         </div>
-        <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
+        <div class="admin-header-actions">
+          <button class="button button-secondary" id="admin-edit-profile" type="button">Edit profile</button>
+          <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
+        </div>
       </div>
 
       <div class="portfolio-grid admin-stats" aria-label="Invitation status">
@@ -4238,6 +4241,7 @@
   }
 
   function bindAdminInvitationEvents(invitations) {
+    document.querySelector("#admin-edit-profile")?.addEventListener("click", openAdminProfileModal);
     document.querySelector("#admin-award-points")?.addEventListener("click", openAdminPointsModal);
 
     document.querySelector("#approve-email-form")?.addEventListener("submit", async (event) => {
@@ -5042,9 +5046,9 @@
     `);
   }
 
-  function openAccountModal() {
-    const selectedIcon = normalizeProfileIcon(state.profile.profile_icon);
-    const iconChoices = [
+  function buildProfileIconChoices(profile) {
+    const selectedIcon = normalizeProfileIcon(profile?.profile_icon);
+    return [
       `
         <label class="profile-icon-option" title="Initials">
           <input
@@ -5055,7 +5059,7 @@
             ${selectedIcon ? "" : "checked"}
           />
           <span class="profile-icon-choice-preview profile-icon-initials" aria-hidden="true">
-            ${escapeHtml(initials(state.profile.display_name))}
+            ${escapeHtml(initials(profile?.display_name))}
           </span>
           <span class="visually-hidden">Initials</span>
         </label>
@@ -5076,6 +5080,10 @@
         </label>
       `),
     ].join("");
+  }
+
+  function openAccountModal() {
+    const iconChoices = buildProfileIconChoices(state.profile);
 
     openModal(`
       <div class="modal-header">
@@ -5166,6 +5174,120 @@
       closeModal();
       await refreshData({ quiet: true });
       showToast("Profile updated.", "success");
+    });
+  }
+
+  function openAdminProfileModal() {
+    if (!state.profile?.is_admin) return;
+
+    const sortedProfiles = [...state.profiles].sort((a, b) =>
+      a.display_name.localeCompare(b.display_name)
+    );
+    const iconChoices = buildProfileIconChoices(null);
+
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Administrator</p>
+          <h2>Edit trader profile.</h2>
+          <p>Correct a trader’s display name or curated profile icon.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <form id="admin-profile-form">
+        <div class="modal-body">
+          <div class="form-field">
+            <label for="admin-profile-user">Trader</label>
+            <select id="admin-profile-user" name="userId" required>
+              <option value="" selected>Choose a trader…</option>
+              ${sortedProfiles.map((profile) => `
+                <option value="${profile.id}">${escapeHtml(profile.display_name)}</option>
+              `).join("")}
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="admin-profile-name">Display name</label>
+            <input
+              id="admin-profile-name"
+              name="displayName"
+              minlength="2"
+              maxlength="32"
+              required
+              disabled
+            />
+          </div>
+          <fieldset class="profile-icon-field" aria-describedby="admin-profile-icon-help" disabled>
+            <legend>Profile icon</legend>
+            <p id="admin-profile-icon-help">Choose how this trader appears across the exchange.</p>
+            <div class="profile-icon-grid">
+              ${iconChoices}
+            </div>
+          </fieldset>
+        </div>
+        <div class="modal-footer">
+          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+          <button class="button button-primary" type="submit" disabled>Save changes</button>
+        </div>
+      </form>
+    `, "account-modal admin-profile-modal");
+
+    const form = document.querySelector("#admin-profile-form");
+    const userSelect = document.querySelector("#admin-profile-user");
+    const nameInput = document.querySelector("#admin-profile-name");
+    const iconField = form.querySelector(".profile-icon-field");
+    const initialsPreview = form.querySelector(".profile-icon-initials");
+    const iconInputs = form.querySelectorAll("[name='profileIcon']");
+    const submit = form.querySelector("button[type='submit']");
+
+    const populateSelectedProfile = () => {
+      const profile = state.profiles.find((item) => item.id === userSelect.value);
+      const selectedIcon = normalizeProfileIcon(profile?.profile_icon) || "";
+
+      nameInput.value = profile?.display_name || "";
+      nameInput.disabled = !profile;
+      iconField.disabled = !profile;
+      submit.disabled = !profile;
+      initialsPreview.textContent = initials(profile?.display_name);
+      iconInputs.forEach((input) => {
+        input.checked = input.value === selectedIcon;
+      });
+    };
+
+    userSelect.addEventListener("change", populateSelectedProfile);
+    nameInput.addEventListener("input", () => {
+      initialsPreview.textContent = initials(nameInput.value);
+    });
+    userSelect.focus();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      const userId = String(formData.get("userId") || "");
+      const profile = state.profiles.find((item) => item.id === userId);
+      const name = String(formData.get("displayName") || "").trim();
+      const profileIcon = normalizeProfileIcon(formData.get("profileIcon"));
+
+      if (!profile || name.length < 2 || name.length > 32) {
+        showToast("Choose a trader and enter a display name between 2 and 32 characters.", "error");
+        return;
+      }
+
+      setButtonLoading(submit, true, "Saving…");
+      const { error } = await state.client.rpc("admin_update_profile", {
+        p_user_id: userId,
+        p_display_name: name,
+        p_profile_icon: profileIcon,
+      });
+      setButtonLoading(submit, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      closeModal();
+      await refreshData({ quiet: true });
+      showToast(`${name}’s profile was updated.`, "success");
     });
   }
 

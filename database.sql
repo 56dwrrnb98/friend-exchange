@@ -489,6 +489,90 @@ begin
 end;
 $$;
 
+create or replace function public.admin_update_profile(
+  p_user_id uuid,
+  p_display_name text,
+  p_profile_icon text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_admin_id uuid := auth.uid();
+  v_is_admin boolean := false;
+  v_name text := btrim(coalesce(p_display_name, ''));
+  v_icon text := nullif(btrim(coalesce(p_profile_icon, '')), '');
+begin
+  if v_admin_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select coalesce(is_admin, false)
+  into v_is_admin
+  from public.profiles
+  where id = v_admin_id;
+
+  if not v_is_admin then
+    raise exception 'Only administrators can edit trader profiles.';
+  end if;
+
+  if char_length(v_name) < 2 or char_length(v_name) > 32 then
+    raise exception 'Display names must be between 2 and 32 characters.';
+  end if;
+
+  if v_icon is not null and v_icon not in (
+    'baseball',
+    'beer-mug-empty',
+    'bolt',
+    'burger',
+    'car-side',
+    'crown',
+    'dragon',
+    'face-grin-beam',
+    'face-grin-hearts',
+    'face-grin-stars',
+    'face-grin-tongue-wink',
+    'face-laugh-squint',
+    'flag-checkered',
+    'football',
+    'ghost',
+    'guitar',
+    'hand-peace',
+    'ice-cream',
+    'jet-fighter',
+    'masks-theater',
+    'motorcycle',
+    'music',
+    'palette',
+    'paw',
+    'peace',
+    'pizza-slice',
+    'poo',
+    'robot',
+    'rocket',
+    'sack-dollar',
+    'skull',
+    'tree',
+    'truck-monster',
+    'wine-glass'
+  ) then
+    raise exception 'Choose a supported profile icon.';
+  end if;
+
+  update public.profiles
+  set
+    display_name = v_name,
+    profile_icon = v_icon
+  where id = p_user_id;
+
+  if not found then
+    raise exception 'Target profile not found.';
+  end if;
+end;
+$$;
+
 create or replace function public.create_market(
   p_question text,
   p_description text,
@@ -1733,6 +1817,7 @@ using (
 -- Function execution permissions.
 revoke all on function public.update_display_name(text) from public, anon;
 revoke all on function public.update_profile(text, text) from public, anon;
+revoke all on function public.admin_update_profile(uuid, text, text) from public, anon;
 revoke all on function public.create_market(text, text, text, timestamptz, text[]) from public, anon;
 revoke all on function public.edit_market(bigint, text, text, text, timestamptz) from public, anon;
 revoke all on function public.place_prediction(bigint, bigint, bigint) from public, anon;
@@ -1755,6 +1840,7 @@ revoke all on function public.acknowledge_monthly_allowances(date) from public, 
 
 grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.update_profile(text, text) to authenticated;
+grant execute on function public.admin_update_profile(uuid, text, text) to authenticated;
 grant execute on function public.create_market(text, text, text, timestamptz, text[]) to authenticated;
 grant execute on function public.edit_market(bigint, text, text, text, timestamptz) to authenticated;
 grant execute on function public.place_prediction(bigint, bigint, bigint) to authenticated;

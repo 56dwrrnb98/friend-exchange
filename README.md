@@ -20,23 +20,35 @@ There is no build step, package manager, framework, or custom server.
 
 - Administrator-approved registration with email confirmation
 - Password recovery and persistent accounts across devices
+- Editable display names and a curated set of profile icons
 - 1,000 starting points for each member
-- A monthly allowance for recently active members
+- A 100-point monthly allowance for members who signed in during the preceding
+  90 days
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
-- Markets with 2–10 outcomes, including simple Yes/No questions
+- Market creation by any confirmed member, with optional details and 2–10
+  outcomes, including simple Yes/No questions
 - Scheduled markets and markets that remain open until the outcome becomes known
 - Community odds based on the points committed to each outcome
 - Per-outcome latest-trade movement and expandable soft-step odds history
-- Multiple predictions per member and market
+- Final predictions that cannot be withdrawn, with the option to add more
+  points or back another outcome later
+- Live position scenarios showing the potential return and net result for each
+  outcome
 - Proportional pari-mutuel payouts
 - Automatic refunds when nobody selected the winning outcome
-- Creator- or administrator-controlled resolution with a permanent eligibility cutoff
+- Creator- or administrator-controlled resolution with a permanent note,
+  optional source link, and market lifecycle timeline
+- A permanent eligibility cutoff based on the scheduled close or the time the
+  outcome became known
 - Automatic refunds for predictions submitted at or after the eligibility cutoff
-- Permanent resolution notes
-- Administrator controls for invitations, point adjustments, early resolution,
-  voiding, corrections, and archiving
-- Cross-market and per-market activity, leaderboard, market history, and personal portfolio views
+- Market voiding with automatic refunds
+- Administrator controls for the invitation registry, trader profiles, point
+  adjustments, open-market corrections, early resolution, voided-market
+  archiving/restoration, and deletion of empty voided markets
+- Active, resolved, voided, and archived market views
+- Cross-market and per-market activity, sortable performance leaderboards,
+  market history, and filterable/sortable personal portfolio views
 - Optional real-time updates across open browsers
 - Responsive desktop and mobile layouts
 
@@ -97,12 +109,6 @@ The SQL file creates the tables, indexes, security policies, profile automation,
 payout logic, database functions, monthly allowance schedule, and real-time
 publication configuration. Run the complete file once on a new Supabase
 project.
-
-For an existing database, apply the files in `migrations/` in chronological
-order. After the monthly allowance migrations, run
-`migrations/20260731_allowance_notifications.sql` and
-`migrations/20260804_outcome_cutoffs.sql` before deploying the matching front
-end.
 
 ## 2. Configure email authentication
 
@@ -172,7 +178,7 @@ Examples:
 
 ```text
 http://localhost:8000/
-https://friendexchange.github.io/
+https://your-account.github.io/your-repository/
 ```
 
 Use the actual address shown in your browser. Password-recovery links return to
@@ -208,6 +214,17 @@ included Row Level Security policies and database functions protect balances,
 predictions, results, and administrator actions.
 
 Never place a Secret key or `service_role` key in `config.js`.
+
+### Optional branding and metadata
+
+`appName` and `tagline` customize the name and tagline shown on the account
+screen and in the application header. For a fully branded installation, also
+update the page title, description, canonical URL, Open Graph metadata, icons,
+and manifest links in `index.html`; update the name, colors, and icons in
+`site.webmanifest`; and replace the files in `img/` as needed.
+
+Set public metadata URLs to your own deployed address. Relative asset URLs are
+the simplest choice when the site may be published below a repository path.
 
 ## 6. Run the application locally
 
@@ -251,23 +268,28 @@ Use it to approve additional member email addresses and manage the exchange.
 
 ## 8. Publish the site
 
-The browser requires these files:
+The published site needs these runtime files:
 
 - `index.html`
 - `styles.css`
 - `app.js`
 - `config.js`
+- `site.webmanifest`
+- `favicon.ico`
+- The `img/` directory
 
 To publish with GitHub Pages:
 
-1. Use the GitHub account named `friendexchange`.
-2. Name the repository `friendexchange.github.io`.
-3. Commit the application files to the `main` branch.
-4. Open the repository's **Settings → Pages**.
-5. Under **Build and deployment**, select **Deploy from a branch**.
-6. Choose the `main` branch and `/ (root)` folder.
-7. Save the settings and verify `https://friendexchange.github.io/` loads.
-8. Set Supabase's **Site URL** to that address and add the exact address under
+1. Create a repository in your own GitHub account or organization. Any
+   repository name works. A repository named `<account>.github.io` publishes
+   at the account root; other names publish below a repository path.
+2. Commit the runtime files to the `main` branch. Keeping the remaining source,
+   documentation, and tests in the same repository is fine.
+3. Open the repository's **Settings → Pages**.
+4. Under **Build and deployment**, select **Deploy from a branch**.
+5. Choose the `main` branch and `/ (root)` folder, then save.
+6. Open the URL shown by GitHub Pages and verify that the application loads.
+7. Set Supabase's **Site URL** to that exact address and add it under
    **Redirect URLs**.
 
 See the [GitHub Pages publishing
@@ -282,16 +304,18 @@ site URL itself can be shared freely.
 # Project files
 
 ```text
-friendexchange.github.io/
-├── index.html         Application structure and account screens
+project/
+├── img/                Icons, favicons, and link-preview artwork
+├── tests/
+│   └── phase1.test.js Local front-end, SQL-definition, and calculation checks
+├── index.html         Application structure, account screens, and metadata
 ├── styles.css         Responsive visual design
 ├── app.js             Front-end behavior and Supabase calls
-├── config.js          Your public Supabase configuration and app name
+├── config.js          Public Supabase configuration and visible app name
 ├── config.example.js  Placeholder configuration template
 ├── database.sql       Complete database setup for a new project
-├── migrations/        Ordered changes for an existing database
-├── tests/
-│   └── phase1.test.js Local front-end and calculation checks
+├── site.webmanifest   Browser installation metadata
+├── favicon.ico        Legacy browser icon
 └── README.md          Setup, architecture, and usage instructions
 ```
 
@@ -333,15 +357,22 @@ spend the same points twice.
 
 The Friend Exchange is designed for a small, trusted community.
 
+- Each deployment is one shared exchange. Confirmed members can see the other
+  members' public profiles, markets, predictions, and payouts; there are no
+  separate private groups within one installation.
 - The invitation registry approves addresses but does not send invitation
   messages.
 - Signup confirmation and password recovery depend on correctly configured
   SMTP and redirect URLs.
+- Markets are resolved manually by their creator or an administrator; the
+  application does not determine real-world outcomes automatically.
 - Display names are not required to be unique.
 - There are no comments, general-purpose notifications, images, market
   categories, or search.
 - The application loads the complete small-community dataset at once. A large
   public deployment would require pagination and more selective queries.
+- The application depends on hosted Supabase, font, icon, and JavaScript assets
+  and does not provide offline operation.
 - Modals do not currently trap keyboard focus or restore focus when closed.
 - External CDN assets do not currently use Subresource Integrity or a Content
   Security Policy.

@@ -617,6 +617,14 @@ textarea::placeholder {
   color: var(--muted);
 }
 
+.admin-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
 .hero {
   position: relative;
   overflow: hidden;
@@ -2778,6 +2786,10 @@ a.exchange-activity-item:focus-visible {
   margin: 0;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.profile-icon-field:disabled {
+  opacity: 0.55;
 }
 
 .profile-icon-grid {
