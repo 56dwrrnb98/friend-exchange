@@ -2239,9 +2239,9 @@
           const recipient = state.profiles.find(
             (profile) => profile.id === winnerPayouts[0].user_id,
           );
-          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed to ${recipient?.display_name || "1 trader"}`;
+          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed to ${recipient?.display_name || "1 winner"}`;
         } else {
-          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed among ${winnerPayouts.length} ${pluralize(winnerPayouts.length, "trader")}`;
+          resultSummary = `${formatNumber(payoutTotal || market.actualTotal)} pts distributed among ${winnerPayouts.length} winners`;
         }
         const insights = market.lateTotal > 0
           ? [`${formatNumber(market.lateTotal)} late pts refunded`]
@@ -2318,9 +2318,7 @@
       case "closed":
         return "<strong>Predictions closed</strong>";
       case "resolved":
-        return event.actor
-          ? `<strong>${name}</strong><span> made the result official: </span><strong>${outcome}</strong>`
-          : `<strong>Result made official: ${outcome}</strong>`;
+        return `<strong>Result official: ${outcome}</strong>`;
       case "void":
         return "<strong>Market voided</strong>";
       case "joined":
@@ -2331,15 +2329,17 @@
   }
 
   function renderExchangeActivityIcon(event) {
-    if (event.actor) return renderProfileAvatar(event.actor);
     const icon = event.type === "closed"
       ? "lock"
-      : event.type === "void"
-        ? "ban"
-        : "check";
+      : event.type === "resolved"
+        ? "stamp"
+        : event.type === "void"
+          ? "ban"
+          : null;
+    if (!icon && event.actor) return renderProfileAvatar(event.actor);
     return `
       <span class="exchange-activity-system-icon" aria-hidden="true">
-        <i class="fa-solid fa-${icon}"></i>
+        <i class="fa-solid fa-${icon || "check"}"></i>
       </span>
     `;
   }
@@ -2617,6 +2617,80 @@
     return "";
   }
 
+  function renderMarketPersonalSettlement(market, userId, userCommitted) {
+    const userPayouts = state.payouts.filter(
+      (payout) => payout.market_id === market.id && payout.user_id === userId,
+    );
+    const hasPersonalActivity = userCommitted > 0 || userPayouts.length > 0;
+    if (!hasPersonalActivity) return "";
+
+    if (market.displayStatus === "closed") {
+      return `
+        <div class="summary-row summary-row-personal-result">
+          <span>Your result</span>
+          <strong class="muted">Pending</strong>
+        </div>
+      `;
+    }
+
+    if (market.displayStatus === "resolved") {
+      const returned = userPayouts
+        .filter((payout) => payout.kind !== "late_refund" && payout.kind !== "void_refund")
+        .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+      const lateRefund = userPayouts
+        .filter((payout) => payout.kind === "late_refund")
+        .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+      const profitLoss = returned - userCommitted;
+      const profitLossClass = profitLoss > 0
+        ? "text-success"
+        : profitLoss < 0
+          ? "text-danger"
+          : "";
+
+      return `
+        <div class="summary-row summary-row-personal-return">
+          <span>Returned to you</span>
+          <strong>${formatNumber(returned)} pts</strong>
+        </div>
+        ${lateRefund > 0 ? `
+          <div class="summary-row summary-row-personal-refund">
+            <span>Late points refunded</span>
+            <strong>${formatNumber(lateRefund)} pts</strong>
+          </div>
+        ` : ""}
+        <div class="summary-row summary-row-personal-profit-loss">
+          <span>Profit / loss</span>
+          <strong class="${profitLossClass}">${profitLoss > 0 ? "+" : ""}${formatNumber(profitLoss)} pts</strong>
+        </div>
+      `;
+    }
+
+    if (market.displayStatus === "void") {
+      const refunded = userPayouts
+        .filter((payout) => payout.kind === "void_refund")
+        .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+      const netChange = refunded - userCommitted;
+      const netChangeClass = netChange > 0
+        ? "text-success"
+        : netChange < 0
+          ? "text-danger"
+          : "";
+
+      return `
+        <div class="summary-row summary-row-personal-refund">
+          <span>Refunded to you</span>
+          <strong>${formatNumber(refunded)} pts</strong>
+        </div>
+        <div class="summary-row summary-row-personal-net-change">
+          <span>Net change</span>
+          <strong class="${netChangeClass}">${netChange > 0 ? "+" : ""}${formatNumber(netChange)} pts</strong>
+        </div>
+      `;
+    }
+
+    return "";
+  }
+
   function renderMarketDetail(marketId) {
     const market = getAllMarkets().find((item) => item.id === marketId);
     if (!market) {
@@ -2813,6 +2887,7 @@
                   <span>Committed to this market</span>
                   <strong>${formatNumber(userCommitted)} pts</strong>
                 </div>
+                ${renderMarketPersonalSettlement(market, state.user.id, userCommitted)}
               </div>
 
             </div>
@@ -3104,7 +3179,7 @@
               <input type="radio" name="closeMode" value="outcome" />
               <span>
                 <strong>Open until outcome</strong>
-                <small>Predictions made once the outcome is known don’t count and are refunded.</small>
+                <small>Predictions made after the outcome is known don’t count and are refunded.</small>
               </span>
             </label>
           </div>
@@ -4364,8 +4439,8 @@
           </div>
           <div class="quick-amounts">
             <button data-quick-amount="25" type="button">25 pts</button>
+            <button data-quick-amount="50" type="button">50 pts</button>
             <button data-quick-amount="100" type="button">100 pts</button>
-            <button data-quick-amount="250" type="button">250 pts</button>
             <button data-quick-amount="max" type="button">All in</button>
           </div>
 
