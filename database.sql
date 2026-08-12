@@ -184,6 +184,31 @@ create table if not exists public.outcomes (
     unique (id, market_id)
 );
 
+create or replace function public.enforce_market_outcome_limit()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if (
+    select count(*)
+    from public.outcomes
+    where market_id = new.market_id
+  ) > 6 then
+    raise exception 'Markets cannot have more than 6 outcomes.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_market_outcome_limit on public.outcomes;
+create constraint trigger enforce_market_outcome_limit
+after insert or update of market_id on public.outcomes
+deferrable initially immediate
+for each row
+execute function public.enforce_market_outcome_limit();
+
 -- Add the market → winning outcome relationship after outcomes exists.
 do $$
 begin
@@ -618,8 +643,8 @@ begin
   end if;
 
   v_outcome_count := coalesce(cardinality(p_outcome_labels), 0);
-  if v_outcome_count < 2 or v_outcome_count > 10 then
-    raise exception 'Markets must have between 2 and 10 outcomes.';
+  if v_outcome_count < 2 or v_outcome_count > 6 then
+    raise exception 'Markets must have between 2 and 6 outcomes.';
   end if;
 
   if exists (
@@ -1815,6 +1840,8 @@ using (
 );
 
 -- Function execution permissions.
+revoke all on function public.enforce_market_outcome_limit()
+  from public, anon, authenticated;
 revoke all on function public.update_display_name(text) from public, anon;
 revoke all on function public.update_profile(text, text) from public, anon;
 revoke all on function public.admin_update_profile(uuid, text, text) from public, anon;

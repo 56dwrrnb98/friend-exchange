@@ -1502,6 +1502,7 @@ a.exchange-activity-item:focus-visible {
 
 .odds-history-heading h3 {
   margin: 0;
+  color: var(--ink);
   font-size: 1rem;
 }
 
@@ -1512,13 +1513,30 @@ a.exchange-activity-item:focus-visible {
   margin-top: 14px;
 }
 
-.odds-history-legend > span {
+.odds-history-legend > button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   color: var(--muted);
+  font: inherit;
   font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.odds-history-legend > button:hover,
+.odds-history-legend > button[aria-pressed="true"] {
+  color: var(--ink);
+}
+
+.odds-history-legend > button:focus-visible {
+  outline: 2px solid var(--mint-strong);
+  outline-offset: 3px;
 }
 
 .odds-history-legend i {
@@ -1534,52 +1552,46 @@ a.exchange-activity-item:focus-visible {
   font-family: var(--font-mono);
 }
 
-.odds-history-outcome-picker {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
-  margin-top: 14px;
-}
-
-.odds-history-outcome-picker span {
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-}
-
-.odds-history-outcome-picker select {
-  min-width: 0;
-  height: 38px;
-  padding-block: 7px;
-  font-size: 0.75rem;
-}
-
 .odds-history-chart {
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
+  overflow: hidden;
   margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background:
     linear-gradient(rgba(255, 254, 248, 0.88), rgba(255, 254, 248, 0.88)),
     linear-gradient(90deg, var(--mint-soft), transparent);
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
 }
 
-.odds-history-chart svg {
+.odds-history-plot {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 18px 14px 0 8px;
+}
+
+.odds-history-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  min-width: 0;
+  padding: 0 0 1px;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.odds-history-plot svg {
   display: block;
   width: 100%;
   min-width: 0;
-  height: auto;
-}
-
-.odds-history-chart svg.is-scrollable {
-  width: var(--history-chart-width);
-  max-width: none;
+  height: clamp(184px, 27vw, 232px);
+  overflow: visible;
 }
 
 .odds-history-grid-line {
@@ -1588,51 +1600,110 @@ a.exchange-activity-item:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
-.odds-history-axis-label {
-  fill: var(--ink-soft);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+.odds-history-ribbon {
+  fill: var(--history-color);
+  fill-opacity: 0.14;
+  transition: fill-opacity 160ms ease;
 }
 
-.odds-history-line {
+.odds-history-ribbon-boundary {
   fill: none;
   stroke: var(--history-color);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 3;
+  stroke-width: 1.75;
   vector-effect: non-scaling-stroke;
+  transition:
+    opacity 160ms ease,
+    stroke-width 160ms ease;
+}
+
+.odds-history.has-outcome-focus .odds-history-ribbon {
+  fill-opacity: 0.045;
+}
+
+.odds-history.has-outcome-focus .odds-history-ribbon[data-highlighted="true"] {
+  fill-opacity: 0.25;
+}
+
+.odds-history.has-outcome-focus .odds-history-ribbon-boundary {
+  opacity: 0.28;
+}
+
+.odds-history.has-outcome-focus .odds-history-ribbon-boundary[data-highlighted="true"] {
+  opacity: 1;
+  stroke-width: 2.5;
+}
+
+.odds-history-trade-axis {
+  position: relative;
+  height: 34px;
+  margin: 0 14px 0 60px;
+}
+
+.odds-history-trade-rail {
+  position: absolute;
+  top: 17px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line);
 }
 
 .odds-history-event-target {
+  position: absolute;
+  top: 0;
+  left: clamp(17px, var(--history-x), calc(100% - 17px));
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  transform: translateX(-50%);
   cursor: pointer;
 }
 
-.odds-history-event-hit {
-  fill: transparent;
+.odds-history-event-target:focus-visible {
+  outline: 2px solid var(--mint-strong);
+  outline-offset: -3px;
 }
 
 .odds-history-event-dot {
-  fill: var(--history-color);
-  stroke: var(--paper-strong);
-  stroke-width: 2;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--paper-strong);
+  border-radius: 50%;
+  background: var(--history-color);
   pointer-events: none;
-  vector-effect: non-scaling-stroke;
   transition:
-    r 160ms ease,
-    stroke-width 160ms ease;
+    width 160ms ease,
+    height 160ms ease,
+    border-color 160ms ease,
+    border-width 160ms ease;
 }
 
 .odds-history-event-target:hover .odds-history-event-dot,
 .odds-history-event-target:focus .odds-history-event-dot,
 .odds-history-event-target[data-active="true"] .odds-history-event-dot {
-  r: 7px;
-  stroke: var(--ink);
-  stroke-width: 2.5;
+  width: 13px;
+  height: 13px;
+  border-color: var(--ink);
+  border-width: 2.5px;
 }
 
-.odds-history-event-target:focus {
-  outline: none;
+.odds-history-x-axis {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 14px 14px 60px;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
 }
 
 .odds-history-event {
@@ -1650,6 +1721,7 @@ a.exchange-activity-item:focus-visible {
 
 .odds-history-event-copy p {
   margin: 0;
+  color: var(--ink);
   font-size: 0.74rem;
 }
 
@@ -1913,6 +1985,127 @@ a.exchange-activity-item:focus-visible {
 
 .activity-list {
   display: grid;
+}
+
+.market-activity-heading-actions {
+  flex: 0 0 auto;
+}
+
+.market-activity-view-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 8px;
+  gap: 6px;
+  align-items: center;
+  min-width: 220px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(244, 242, 233, 0.52);
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.market-activity-view-field:hover {
+  border-color: var(--ink-soft);
+  background: rgba(184, 255, 106, 0.14);
+}
+
+.market-activity-view-field:focus-within {
+  border-color: var(--ink);
+  background: var(--paper-strong);
+  box-shadow: 0 0 0 3px rgba(184, 255, 106, 0.55);
+}
+
+.market-activity-view-prefix {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.market-activity-view-value {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-activity-view-chevron {
+  width: 7px;
+  height: 7px;
+  margin-top: -3px;
+  border-right: 1.5px solid var(--ink-soft);
+  border-bottom: 1.5px solid var(--ink-soft);
+  transform: rotate(45deg);
+}
+
+.market-activity-view-field select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.market-activity-view-field select:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.activity-position-groups {
+  display: grid;
+  gap: 20px;
+}
+
+.activity-position-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.activity-position-heading h3 {
+  flex: 1 1 140px;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.activity-position-total {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid rgba(52, 122, 22, 0.16);
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.activity-position-total strong {
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.activity-position-total span {
+  color: var(--ink-soft);
+  font-size: 0.58rem;
 }
 
 .activity-item {
@@ -3243,6 +3436,11 @@ a.exchange-activity-item:focus-visible {
     justify-content: space-between;
   }
 
+  .market-activity-view-field {
+    width: 100%;
+    min-width: 0;
+  }
+
   .outcome-card {
     gap: 12px;
   }
@@ -3281,13 +3479,30 @@ a.exchange-activity-item:focus-visible {
     align-items: flex-start;
   }
 
+  .odds-history-plot {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 7px;
+    padding: 14px 10px 0 6px;
+  }
+
+  .odds-history-plot svg {
+    height: 190px;
+  }
+
+  .odds-history-trade-axis {
+    margin-right: 10px;
+    margin-left: 49px;
+  }
+
+  .odds-history-x-axis {
+    margin-right: 10px;
+    margin-left: 49px;
+    margin-bottom: 12px;
+  }
+
   .odds-history-event {
     grid-template-columns: 1fr;
     gap: 5px;
-  }
-
-  .odds-history-axis-label {
-    font-size: clamp(16px, calc(27px - 1.5vw), 21px);
   }
 
   .odds-history-event time {

@@ -26,11 +26,11 @@ There is no build step, package manager, framework, or custom server.
   90 days
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
-- Market creation by any confirmed member, with optional details and 2–10
+- Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
 - Scheduled markets and markets that remain open until the outcome becomes known
 - Community odds based on the points committed to each outcome
-- Per-outcome latest-trade movement and expandable soft-step odds history
+- Per-outcome latest-trade movement and adaptive ribbon/row odds history
 - Final predictions that cannot be withdrawn, with the option to add more
   points or back another outcome later
 - Live position scenarios showing the potential return and net result for each
