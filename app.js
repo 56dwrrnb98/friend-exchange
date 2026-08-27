@@ -775,11 +775,21 @@
   }
 
   function renderFatalError(error) {
+    const isFutureJwtError = String(error?.message || "")
+      .toLowerCase()
+      .includes("jwt issued at future");
+    const heading = isFutureJwtError
+      ? "The present is running slightly behind."
+      : "The exchange has halted trading.";
+    const message = isFutureJwtError
+      ? "The server checking your sign-in is a few seconds behind the server that created it. Give them a moment to synchronize, then try again."
+      : error.message || "Something went wrong while loading the data.";
+
     dom.main.innerHTML = `
       <section class="empty-state">
         <div class="empty-state-icon">!</div>
-        <h2>The exchange has halted trading.</h2>
-        <p>${escapeHtml(error.message || "Something went wrong while loading the data.")}</p>
+        <h2>${heading}</h2>
+        <p>${escapeHtml(message)}</p>
         <button class="button button-primary" id="retry-button" type="button">Try again</button>
       </section>
     `;
@@ -2960,7 +2970,7 @@
             <div class="sidebar-actions">
               ${hasMarketControls ? `
                 <div class="sidebar-management">
-                  <p class="eyebrow sidebar-actions-label">Market controls</p>
+                  <p class="eyebrow sidebar-actions-label">Manage market</p>
                   <div class="sidebar-management-grid">
                     ${canEdit ? '<button class="button button-secondary" id="edit-market" type="button">Edit market</button>' : ""}
                     ${canVoid ? '<button class="button button-danger" id="void-market" type="button">Void &amp; refund</button>' : ""}
