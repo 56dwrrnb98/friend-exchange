@@ -779,7 +779,7 @@
     }
   }
 
-  async function getCurrentPushSubscription() {
+  async function getRawPushSubscription() {
     const registration = state.serviceWorkerRegistration || await preparePushServiceWorker();
     if (!registration?.pushManager) return null;
     return registration.pushManager.getSubscription();
@@ -790,6 +790,20 @@
     const base64 = (value + padding).replaceAll("-", "+").replaceAll("_", "/");
     const raw = window.atob(base64);
     return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+  }
+
+  function pushSubscriptionUsesConfiguredKey(subscription) {
+    const enrolledKey = subscription?.options?.applicationServerKey;
+    if (!enrolledKey || !hasConfiguredVapidKey()) return false;
+    const enrolledBytes = new Uint8Array(enrolledKey);
+    const configuredBytes = urlBase64ToUint8Array(config.vapidPublicKey);
+    return enrolledBytes.length === configuredBytes.length
+      && enrolledBytes.every((byte, index) => byte === configuredBytes[index]);
+  }
+
+  async function getCurrentPushSubscription() {
+    const subscription = await getRawPushSubscription();
+    return pushSubscriptionUsesConfiguredKey(subscription) ? subscription : null;
   }
 
   function getDefaultDeviceLabel() {
@@ -815,6 +829,13 @@
     if (!registration) throw new Error("The notification service could not start on this device.");
 
     let subscription = await registration.pushManager.getSubscription();
+    if (subscription && !pushSubscriptionUsesConfiguredKey(subscription)) {
+      await state.client.rpc("unregister_push_subscription", {
+        p_endpoint: subscription.endpoint,
+      });
+      await subscription.unsubscribe();
+      subscription = null;
+    }
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -837,7 +858,7 @@
   }
 
   async function unregisterCurrentPushSubscription() {
-    const subscription = await getCurrentPushSubscription();
+    const subscription = await getRawPushSubscription();
     if (!subscription) return false;
 
     const { error } = await state.client.rpc("unregister_push_subscription", {
@@ -852,7 +873,7 @@
 
   async function detachPushSubscriptionForSignOut() {
     try {
-      const subscription = await getCurrentPushSubscription();
+      const subscription = await getRawPushSubscription();
       if (!subscription) return;
       await state.client.rpc("unregister_push_subscription", {
         p_endpoint: subscription.endpoint,
