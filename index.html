@@ -74,7 +74,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.0/css/all.min.css"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260901-test-history" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -311,16 +311,16 @@
         </nav>
 
         <div class="header-actions">
-          <button
-            id="notification-button"
-            class="notification-button hidden"
-            type="button"
-            aria-label="Open notifications"
+          <a
+            id="settings-link"
+            class="settings-button"
+            data-nav
+            href="#/settings"
+            aria-label="Open settings"
           >
-            <i class="fa-regular fa-bell" aria-hidden="true"></i>
-            <span id="notification-badge" class="notification-badge hidden" aria-hidden="true">0</span>
-          </button>
-          <button id="balance-button" class="balance-pill" type="button">
+            <i class="fa-solid fa-gear" aria-hidden="true"></i>
+          </a>
+          <button id="balance-button" class="balance-pill" type="button" aria-label="Open account settings">
             <span>Balance</span>
             <strong id="header-balance">—</strong>
           </button>
@@ -358,6 +358,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="config.js?v=20260901-vapid-reset"></script>
-    <script src="app.js?v=20260901-vapid-reset"></script>
+    <script src="app.js?v=20260901-test-history"></script>
   </body>
 </html>

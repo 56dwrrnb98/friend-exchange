@@ -560,6 +560,7 @@ textarea::placeholder {
 }
 
 .balance-pill {
+  min-height: 40px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -590,10 +591,9 @@ textarea::placeholder {
   gap: 8px;
 }
 
-.notification-button {
-  position: relative;
-  width: 42px;
-  height: 42px;
+.settings-button {
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -601,30 +601,16 @@ textarea::placeholder {
   border-radius: 50%;
   cursor: pointer;
   background: var(--paper-strong);
-  font-size: 1rem;
-}
-
-.notification-button:hover {
-  border-color: var(--ink);
-  background: #fff;
-}
-
-.notification-badge {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 19px;
-  height: 19px;
-  display: grid;
-  place-items: center;
-  padding: 0 5px;
-  border: 2px solid var(--paper);
-  border-radius: 999px;
-  background: var(--coral);
   color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  font-weight: 800;
+  font-size: 1rem;
+  text-decoration: none;
+}
+
+.settings-button:hover,
+.settings-button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--mint);
 }
 
 .main-content {
@@ -2726,6 +2712,14 @@ a.exchange-activity-item:focus-visible {
   font-size: 0.8rem;
 }
 
+.admin-table-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
 .invitation-table td:last-child {
   text-align: right;
 }
@@ -2966,82 +2960,137 @@ a.exchange-activity-item:focus-visible {
   margin-top: 20px;
 }
 
-.notification-modal {
-  width: min(100%, 720px);
+.settings-page-header {
+  max-width: 760px;
 }
 
-.notification-modal-body {
+.settings-columns {
   display: grid;
-  gap: 24px;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 20px;
+  align-items: start;
 }
 
-.notification-list-heading,
-.notification-settings-heading,
+.settings-column {
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.settings-card {
+  display: grid;
+  gap: 20px;
+}
+
+.settings-card-heading {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-card-icon,
+.settings-device-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--mint);
+}
+
+.settings-device-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.settings-device-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-card-heading > .avatar {
+  width: 40px;
+  height: 40px;
+}
+
+.settings-profile-card .profile-icon-field {
+  margin-top: 0;
+}
+
+.settings-profile-card .profile-icon-grid {
+  max-width: none;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.settings-card-actions,
 .notification-settings-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
 }
 
-.notification-list {
+.settings-account-email {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.settings-account-email span {
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.settings-account-email strong {
+  overflow-wrap: anywhere;
+}
+
+.settings-account-actions {
+  justify-content: space-between;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-device-list {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
 }
 
-.notification-item {
+.settings-device-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
-  padding: 14px;
+  padding: 13px;
   border-bottom: 1px solid var(--line);
-  background: var(--paper-strong);
-  text-decoration: none;
 }
 
-.notification-item:last-child {
+.settings-device-row:last-child {
   border-bottom: 0;
 }
 
-.notification-item:hover {
-  background: var(--paper);
-}
-
-.notification-item.is-unread {
-  box-shadow: inset 4px 0 0 var(--mint-strong);
+.settings-device-icon {
   background: var(--mint-soft);
-}
-
-.notification-item-icon {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--mint);
-}
-
-.notification-item-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-  color: var(--ink-soft);
-  font-size: 0.78rem;
-}
-
-.notification-item-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
   color: var(--ink);
 }
 
-.notification-item-copy small {
-  color: var(--muted);
-  font-size: 0.65rem;
+.settings-device-empty {
+  min-height: 140px;
 }
 
 .notification-empty {
@@ -3065,15 +3114,11 @@ a.exchange-activity-item:focus-visible {
 
 .notification-settings {
   display: grid;
-  gap: 15px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
+  gap: 20px;
 }
 
-.notification-settings-heading p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 0.75rem;
+.notification-settings-heading > .status-pill {
+  align-self: center;
 }
 
 .push-capability-note {
@@ -3108,6 +3153,30 @@ a.exchange-activity-item:focus-visible {
   background: var(--paper-strong);
 }
 
+.notification-device-option {
+  align-items: center;
+  cursor: default;
+}
+
+.notification-device-choice {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.notification-device-remove,
+.notification-device-current {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.notification-device-remove {
+  align-self: center;
+}
+
 .notification-preference:has(input:checked),
 .notification-device-option:has(input:checked) {
   border-color: var(--ink);
@@ -3124,21 +3193,17 @@ a.exchange-activity-item:focus-visible {
 }
 
 .notification-preference span,
-.notification-device-option span {
+.notification-device-choice > span {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
 .notification-preference small,
-.notification-device-option small {
+.notification-device-choice small {
   color: var(--muted);
   font-size: 0.67rem;
   line-height: 1.4;
-}
-
-.notification-privacy-note {
-  margin: 0;
 }
 
 .notification-lab-panel,
@@ -3790,6 +3855,10 @@ a.exchange-activity-item:focus-visible {
   .notification-lab-grid {
     grid-template-columns: 1fr;
   }
+
+  .settings-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -3807,7 +3876,7 @@ a.exchange-activity-item:focus-visible {
     gap: 6px;
   }
 
-  .notification-button {
+  .settings-button {
     width: 40px;
     height: 40px;
   }
@@ -3891,10 +3960,45 @@ a.exchange-activity-item:focus-visible {
   }
 
   .notification-mode-form,
-  .notification-settings-actions,
-  .notification-settings-heading {
+  .notification-settings-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .settings-card-heading {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .settings-card-heading > .status-pill,
+  .settings-card-heading > .tiny-pill {
+    width: fit-content;
+    grid-column: 2;
+  }
+
+  .settings-profile-card .profile-icon-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .settings-device-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .settings-device-row > .tiny-pill,
+  .settings-device-row .notification-device-remove {
+    width: fit-content;
+    grid-column: 2;
+    margin-left: 0;
+  }
+
+  .notification-device-option {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .notification-device-remove {
+    width: 100%;
+    margin-left: 28px;
+    text-align: left;
   }
 
   .notification-mode-form .button,
@@ -4317,6 +4421,11 @@ a.exchange-activity-item:focus-visible {
   .admin-table-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .admin-table-heading-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .form-grid {

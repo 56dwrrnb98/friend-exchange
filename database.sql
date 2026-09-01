@@ -3057,6 +3057,66 @@ begin
 end;
 $$;
 
+create or replace function public.admin_clear_notification_test_history()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_admin_id uuid := auth.uid();
+  v_notification_count integer := 0;
+  v_delivery_count integer := 0;
+begin
+  if v_admin_id is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.profiles
+    where id = v_admin_id
+      and is_admin = true
+  ) then
+    raise exception 'Only administrators can clear notification test history.';
+  end if;
+
+  if exists (
+    select 1
+    from public.notification_deliveries as delivery
+    join public.notifications as notification
+      on notification.id = delivery.notification_id
+    where (notification.is_test = true or notification.delivery_mode = 'test')
+      and delivery.status in ('pending', 'processing')
+  ) then
+    raise exception 'Wait for pending test deliveries to finish before clearing test history.';
+  end if;
+
+  select count(*)::integer
+  into v_delivery_count
+  from public.notification_deliveries as delivery
+  join public.notifications as notification
+    on notification.id = delivery.notification_id
+  where notification.is_test = true
+     or notification.delivery_mode = 'test';
+
+  with deleted as (
+    delete from public.notifications
+    where is_test = true
+       or delivery_mode = 'test'
+    returning id
+  )
+  select count(*)::integer
+  into v_notification_count
+  from deleted;
+
+  return jsonb_build_object(
+    'notification_count', v_notification_count,
+    'delivery_count', v_delivery_count
+  );
+end;
+$$;
+
 alter table public.notification_system_settings enable row level security;
 alter table public.notification_preferences enable row level security;
 alter table public.push_subscriptions enable row level security;
@@ -3109,6 +3169,8 @@ revoke all on function public.admin_send_notification_test(text, text, text, tex
   from public, anon;
 revoke all on function public.get_notification_admin_overview(integer)
   from public, anon;
+revoke all on function public.admin_clear_notification_test_history()
+  from public, anon;
 
 grant execute on function public.get_my_notification_preferences()
   to authenticated;
@@ -3131,6 +3193,8 @@ grant execute on function public.admin_set_notification_mode(text)
 grant execute on function public.admin_send_notification_test(text, text, text, text, uuid[])
   to authenticated;
 grant execute on function public.get_notification_admin_overview(integer)
+  to authenticated;
+grant execute on function public.admin_clear_notification_test_history()
   to authenticated;
 
 commit;

@@ -121,8 +121,7 @@
     adminNavLink: document.querySelector("#admin-nav-link"),
     adminMobileNavLink: document.querySelector("#admin-mobile-nav-link"),
     mobileNav: document.querySelector(".mobile-nav"),
-    notificationButton: document.querySelector("#notification-button"),
-    notificationBadge: document.querySelector("#notification-badge"),
+    settingsLink: document.querySelector("#settings-link"),
   };
 
   const state = {
@@ -159,7 +158,6 @@
     pendingAllowanceNotice: null,
     authSubscription: null,
     passwordRecovery: false,
-    notifications: [],
     notificationPreferences: {
       new_market_push: false,
       closing_soon_push: false,
@@ -171,6 +169,7 @@
     notificationRefreshing: false,
     serviceWorkerRegistration: null,
     currentPushSubscriptionActive: false,
+    currentPushSubscriptionEndpoint: null,
     notificationAdminOverview: null,
   };
 
@@ -279,11 +278,7 @@
     window.addEventListener("resize", updateScrollableFilterRows);
 
     dom.balanceButton.addEventListener("click", () => {
-      openAccountModal();
-    });
-
-    dom.notificationButton.addEventListener("click", () => {
-      void openNotificationCenter();
+      window.location.hash = "#/settings";
     });
 
     dom.modalRoot.addEventListener("click", (event) => {
@@ -531,7 +526,6 @@
     state.selectedOutcomeByMarket = new Map();
     state.lastRenderedMarketOdds = new Map();
     state.loading = false;
-    state.notifications = [];
     state.notificationPreferences = {
       new_market_push: false,
       closing_soon_push: false,
@@ -543,6 +537,7 @@
     state.notificationRefreshing = false;
     state.serviceWorkerRegistration = null;
     state.currentPushSubscriptionActive = false;
+    state.currentPushSubscriptionEndpoint = null;
     state.notificationAdminOverview = null;
     closeModal({ acknowledgeAllowance: false });
   }
@@ -631,10 +626,6 @@
       state.realtimeTimer = window.setTimeout(() => refreshData({ quiet: true }), 500);
     };
 
-    const queueNotificationRefresh = () => {
-      window.setTimeout(() => refreshNotificationData(), 200);
-    };
-
     state.realtimeChannel = state.client
       .channel("friend-exchange-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "markets" }, queueRefresh)
@@ -642,11 +633,6 @@
       .on("postgres_changes", { event: "*", schema: "public", table: "predictions" }, queueRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, queueRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "market_payouts" }, queueRefresh)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notification_recipients" },
-        queueNotificationRefresh,
-      )
       .subscribe();
   }
 
@@ -656,45 +642,31 @@
     dom.adminNavLink.classList.toggle("hidden", !isAdmin);
     dom.adminMobileNavLink.classList.toggle("hidden", !isAdmin);
     dom.mobileNav.classList.toggle("admin-visible", isAdmin);
-    const unreadCount = state.notifications.filter((notification) => !notification.read_at).length;
-    dom.notificationButton.classList.toggle("hidden", !state.notificationAvailable);
-    dom.notificationBadge.classList.toggle("hidden", unreadCount === 0);
-    dom.notificationBadge.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
-    dom.notificationButton.setAttribute(
-      "aria-label",
-      unreadCount
-        ? `Open notifications, ${unreadCount} unread`
-        : "Open notifications",
-    );
   }
 
   async function refreshNotificationData() {
     if (!state.client || !state.user || state.notificationRefreshing) return;
     state.notificationRefreshing = true;
 
-    const [notificationsResult, preferencesResult, subscriptionsResult] = await Promise.all([
-      state.client.rpc("list_my_notifications", { p_limit: 50 }),
+    const [preferencesResult, subscriptionsResult] = await Promise.all([
       state.client.rpc("get_my_notification_preferences"),
       state.client.rpc("list_my_push_subscriptions"),
     ]);
 
     state.notificationRefreshing = false;
     const firstError = [
-      notificationsResult.error,
       preferencesResult.error,
       subscriptionsResult.error,
     ].find(Boolean);
 
     if (firstError) {
       state.notificationAvailable = false;
-      state.notifications = [];
       state.pushSubscriptions = [];
       updateHeader();
       return;
     }
 
     state.notificationAvailable = true;
-    state.notifications = notificationsResult.data || [];
     state.notificationPreferences = preferencesResult.data?.[0] || {
       new_market_push: false,
       closing_soon_push: false,
@@ -884,171 +856,225 @@
     }
   }
 
-  function notificationIcon(kind) {
-    const icons = {
-      new_market: "fa-chart-line",
-      closing_soon: "fa-clock",
-      resolution: "fa-check",
-      void: "fa-ban",
-    };
-    return icons[kind] || "fa-bell";
-  }
-
-  function buildNotificationCenterMarkup(currentSubscription) {
+  function buildSettingsMarkup(currentSubscription) {
     const capability = getPushCapability();
     const preferences = state.notificationPreferences;
-    const unreadCount = state.notifications.filter((notification) => !notification.read_at).length;
     const pushActive = Boolean(currentSubscription);
     const currentDevice = state.pushSubscriptions.find(
       (subscription) => subscription.endpoint === currentSubscription?.endpoint,
     );
-    const notificationRows = state.notifications.map((notification) => `
-      <a
-        class="notification-item${notification.read_at ? "" : " is-unread"}"
-        href="${escapeAttribute(notification.target_url)}"
-        data-notification-id="${notification.id}"
-      >
-        <span class="notification-item-icon" aria-hidden="true">
-          <i class="fa-solid ${notificationIcon(notification.kind)}"></i>
-        </span>
-        <span class="notification-item-copy">
-          <span class="notification-item-heading">
-            <strong>${escapeHtml(notification.title)}</strong>
-            ${notification.is_test ? '<span class="tiny-pill">Test</span>' : ""}
+    const notificationControlsAvailable = state.notificationAvailable;
+    const deviceControlsAvailable = notificationControlsAvailable && (pushActive || capability.available);
+    const profileIconChoices = buildProfileIconChoices(state.profile);
+    const deviceRows = state.pushSubscriptions.map((subscription) => {
+      const isCurrentDevice = subscription.endpoint === currentSubscription?.endpoint;
+      const lastSeen = subscription.last_seen_at
+        ? formatRelativeDate(subscription.last_seen_at)
+        : "recently";
+      return `
+        <div class="settings-device-row">
+          <span class="settings-device-icon" aria-hidden="true">
+            <i class="fa-solid ${isCurrentDevice ? "fa-mobile-screen-button" : "fa-display"}"></i>
           </span>
-          <span>${escapeHtml(notification.body)}</span>
-          <small>${escapeHtml(formatRelativeDate(notification.created_at))}</small>
-        </span>
-      </a>
-    `).join("");
+          <span class="settings-device-copy">
+            <strong>${escapeHtml(subscription.device_label)}</strong>
+            <small>Last confirmed ${escapeHtml(lastSeen)}</small>
+          </span>
+          ${isCurrentDevice
+            ? '<span class="tiny-pill notification-device-current">This device</span>'
+            : `<button class="text-button notification-device-remove" type="button" data-remove-settings-push-subscription="${escapeAttribute(subscription.id)}">Remove stale device</button>`}
+        </div>
+      `;
+    }).join("");
 
     return `
-      <div class="modal-header">
+      <div class="page-header settings-page-header">
         <div>
-          <p class="eyebrow">Notification desk</p>
-          <h2>Exchange filings.</h2>
-          <p>${unreadCount
-            ? `${formatNumber(unreadCount)} unread ${pluralize(unreadCount, "notice")}.`
-            : "No unread notices."}</p>
+          <p class="eyebrow">Settings</p>
+          <h1>Your exchange, your rules.</h1>
+          <p>Manage how you appear, what reaches your devices, and how you access your account.</p>
         </div>
-        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
-      <div class="modal-body notification-modal-body">
-        <div class="notification-list-heading">
-          <strong>In-app notices</strong>
-          ${unreadCount
-            ? '<button class="text-button" id="mark-all-notifications-read" type="button">Mark all read</button>'
-            : ""}
-        </div>
-        <div class="notification-list">
-          ${notificationRows || `
-            <div class="notification-empty">
-              <i class="fa-regular fa-bell" aria-hidden="true"></i>
-              <p>Nothing has been filed yet.</p>
+
+      <div class="settings-columns">
+        <div class="settings-column">
+          <form id="settings-profile-form" class="panel settings-card settings-profile-card">
+            <div class="settings-card-heading">
+              ${renderProfileAvatar(state.profile)}
+              <div>
+                <h2>${escapeHtml(state.profile?.display_name || "Trader")}’s Profile</h2>
+              </div>
             </div>
-          `}
+
+            <div class="form-field">
+              <label for="settings-profile-name">Display name</label>
+              <input id="settings-profile-name" name="displayName" minlength="2" maxlength="32" autocomplete="nickname" value="${escapeAttribute(state.profile?.display_name || "")}" required />
+            </div>
+
+            <fieldset class="profile-icon-field" aria-describedby="settings-profile-icon-help">
+              <legend>Profile icon</legend>
+              <p id="settings-profile-icon-help">Choose how you appear across the exchange.</p>
+              <div class="profile-icon-grid">
+                ${profileIconChoices}
+              </div>
+            </fieldset>
+
+            <div class="settings-card-actions">
+              <button class="button button-primary" type="submit">Save profile</button>
+            </div>
+          </form>
+
+          <section class="panel settings-card settings-account-card">
+            <div class="settings-card-heading">
+              <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-key"></i></span>
+              <div>
+                <h2>Account &amp; security</h2>
+              </div>
+            </div>
+            <div class="settings-account-email">
+              <span>Sign-in email</span>
+              <strong>${escapeHtml(state.user?.email || "Unavailable")}</strong>
+            </div>
+            <div class="settings-card-actions settings-account-actions">
+              <button class="button button-secondary" id="settings-reset-password" type="button">Send password-reset email</button>
+              <button class="button button-ghost" id="settings-sign-out" type="button">Sign out</button>
+            </div>
+          </section>
         </div>
 
-        <form id="notification-preferences-form" class="notification-settings">
-          <div class="notification-settings-heading">
-            <div>
-              <strong>Push preferences</strong>
-              <p>In-app notices remain complete. Choose which events may interrupt this device.</p>
+        <div class="settings-column">
+          <form id="notification-preferences-form" class="panel settings-card notification-settings">
+            <div class="settings-card-heading notification-settings-heading">
+              <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-bell"></i></span>
+              <div>
+                <h2>Push notifications</h2>
+              </div>
+              <span class="status-pill ${pushActive ? "status-resolved" : "status-closed"}">
+                ${pushActive ? "Device enabled" : "Device disabled"}
+              </span>
             </div>
-            <span class="status-pill ${pushActive ? "status-resolved" : "status-closed"}">
-              ${pushActive ? "Device enabled" : "Device disabled"}
-            </span>
-          </div>
 
-          <div class="push-capability-note${capability.available ? "" : " is-warning"}">
-            ${escapeHtml(pushActive
-              ? "This browser is enrolled for push delivery."
-              : capability.message)}
-          </div>
+            <div class="push-capability-note${notificationControlsAvailable && (pushActive || capability.available) ? "" : " is-warning"}">
+              ${escapeHtml(!notificationControlsAvailable
+                ? "Push settings are temporarily unavailable. Your profile and account settings still work."
+                : pushActive
+                  ? "This browser is enrolled for push delivery."
+                  : capability.message)}
+            </div>
 
-          <div class="form-field">
-            <label for="notification-device-label">This device’s name</label>
-            <input
-              id="notification-device-label"
-              name="deviceLabel"
-              maxlength="80"
-              value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
-              ${capability.available ? "" : "disabled"}
-            />
-          </div>
+            <div class="form-field">
+              <label for="notification-device-label">This device’s name</label>
+              <input
+                id="notification-device-label"
+                name="deviceLabel"
+                maxlength="80"
+                value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
+                ${deviceControlsAvailable ? "" : "disabled"}
+              />
+            </div>
 
-          <div class="notification-preference-grid">
-            <label class="notification-preference">
-              <input type="checkbox" name="newMarket" ${preferences.new_market_push ? "checked" : ""} />
-              <span><strong>New markets</strong><small>When a new market is listed.</small></span>
-            </label>
-            <label class="notification-preference">
-              <input type="checkbox" name="closingSoon" ${preferences.closing_soon_push ? "checked" : ""} />
-              <span><strong>Closing soon</strong><small>One reminder before scheduled predictions close.</small></span>
-            </label>
-            <label class="notification-preference">
-              <input type="checkbox" name="resolution" ${preferences.resolution_push ? "checked" : ""} />
-              <span><strong>Resolutions</strong><small>When a market resolves or is voided.</small></span>
-            </label>
-          </div>
+            <div class="notification-preference-grid">
+              <label class="notification-preference">
+                <input type="checkbox" name="newMarket" ${preferences.new_market_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                <span><strong>New markets</strong><small>When a new market is listed.</small></span>
+              </label>
+              <label class="notification-preference">
+                <input type="checkbox" name="closingSoon" ${preferences.closing_soon_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                <span><strong>Closing soon</strong><small>One reminder before scheduled predictions close.</small></span>
+              </label>
+              <label class="notification-preference">
+                <input type="checkbox" name="resolution" ${preferences.resolution_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                <span><strong>Resolutions</strong><small>When a market resolves or is voided.</small></span>
+              </label>
+            </div>
 
-          <div class="notification-settings-actions">
-            <button class="button button-secondary" id="toggle-push-device" type="button" ${
-              pushActive || capability.available ? "" : "disabled"
-            }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
-            <button class="button button-primary" type="submit">Save preferences</button>
-          </div>
-          <p class="fine-print notification-privacy-note">
-            Push messages may appear on your lock screen. They do not include balances or personalized payouts.
-          </p>
-        </form>
+            <div class="notification-settings-actions">
+              <button class="button button-secondary" id="toggle-push-device" type="button" ${
+                deviceControlsAvailable ? "" : "disabled"
+              }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
+              <button class="button button-primary" type="submit" ${notificationControlsAvailable ? "" : "disabled"}>Save preferences</button>
+            </div>
+          </form>
+
+          <section class="panel settings-card settings-devices-card">
+            <div class="settings-card-heading">
+              <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-laptop"></i></span>
+              <div>
+                <h2>Notification devices</h2>
+              </div>
+              <span class="tiny-pill">${formatNumber(state.pushSubscriptions.length)} enrolled</span>
+            </div>
+            <div class="settings-device-list">
+              ${deviceRows || `
+                <div class="notification-empty settings-device-empty">
+                  <i class="fa-solid fa-mobile-screen" aria-hidden="true"></i>
+                  <p>No devices are enrolled yet.</p>
+                </div>
+              `}
+            </div>
+          </section>
+
+        </div>
       </div>
     `;
   }
 
-  async function openNotificationCenter() {
-    openModal(`
-      <div class="modal-header">
+  async function renderSettings() {
+    dom.main.innerHTML = `
+      <div class="page-header">
         <div>
-          <p class="eyebrow">Notification desk</p>
-          <h2>Retrieving filings…</h2>
+          <p class="eyebrow">Settings</p>
+          <h1>Preparing your controls…</h1>
         </div>
-        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
-      <div class="modal-body"><div class="skeleton" style="height:240px"></div></div>
-    `, "notification-modal");
+      <div class="loading-grid">
+        <div class="loading-card skeleton"></div>
+        <div class="loading-card skeleton"></div>
+      </div>
+    `;
 
     await refreshNotificationData();
     const currentSubscription = await getCurrentPushSubscription();
-    if (!dom.modalRoot.firstElementChild) return;
-    dom.modalRoot.querySelector(".modal").innerHTML = buildNotificationCenterMarkup(currentSubscription);
+    if (getRoute().page !== "settings") return;
+    state.currentPushSubscriptionActive = Boolean(currentSubscription);
+    state.currentPushSubscriptionEndpoint = currentSubscription?.endpoint || null;
+    dom.main.innerHTML = buildSettingsMarkup(currentSubscription);
+    bindSettingsEvents(currentSubscription);
+  }
 
-    document.querySelectorAll("[data-notification-id]").forEach((link) => {
-      link.addEventListener("click", async (event) => {
-        event.preventDefault();
-        const targetUrl = event.currentTarget.getAttribute("href") || "#/markets";
-        const notificationId = Number(event.currentTarget.dataset.notificationId);
-        const { error } = await state.client.rpc("mark_notification_read", {
-          p_notification_id: notificationId,
-        });
-        if (error) showToast(error.message, "error");
-        await refreshNotificationData();
-        closeModal();
-        window.location.hash = targetUrl;
-      });
+  function bindSettingsEvents(currentSubscription) {
+    const profileNameInput = document.querySelector("#settings-profile-name");
+    const initialsPreview = document.querySelector(".settings-profile-card .profile-icon-initials");
+    profileNameInput?.addEventListener("input", () => {
+      if (initialsPreview) initialsPreview.textContent = initials(profileNameInput.value);
     });
 
-    document.querySelector("#mark-all-notifications-read")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      setButtonLoading(button, true, "Marking…");
-      const { error } = await state.client.rpc("mark_all_notifications_read");
+    document.querySelector("#settings-profile-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const name = String(form.get("displayName") || "").trim();
+      const profileIcon = normalizeProfileIcon(form.get("profileIcon"));
+      const button = event.currentTarget.querySelector("button[type='submit']");
+
+      if (name.length < 2 || name.length > 32) {
+        showToast("Use a display name between 2 and 32 characters.", "error");
+        return;
+      }
+
+      setButtonLoading(button, true, "Saving…");
+      const { error } = await state.client.rpc("update_profile", {
+        p_display_name: name,
+        p_profile_icon: profileIcon,
+      });
       setButtonLoading(button, false);
+
       if (error) {
         showToast(error.message, "error");
         return;
       }
-      await refreshNotificationData();
-      await openNotificationCenter();
+
+      await refreshData({ quiet: true });
+      showToast("Profile updated.", "success");
     });
 
     document.querySelector("#toggle-push-device")?.addEventListener("click", async (event) => {
@@ -1063,7 +1089,7 @@
           await registerCurrentPushSubscription(deviceLabel);
           showToast("This device is ready for push notifications.", "success");
         }
-        await openNotificationCenter();
+        await renderSettings();
       } catch (error) {
         setButtonLoading(button, false);
         showToast(error.message || "Push notifications could not be updated.", "error");
@@ -1098,7 +1124,49 @@
 
       await refreshNotificationData();
       showToast("Notification preferences updated.", "success");
-      await openNotificationCenter();
+      await renderSettings();
+    });
+
+    document.querySelectorAll("[data-remove-settings-push-subscription]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const subscription = state.pushSubscriptions.find(
+          (item) => item.id === button.dataset.removeSettingsPushSubscription,
+        );
+        if (subscription) openRemovePushSubscriptionModal(subscription);
+      });
+    });
+
+    document.querySelector("#settings-reset-password")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Sending…");
+      const { error } = await state.client.auth.resetPasswordForEmail(state.user.email, {
+        redirectTo: getPasswordResetRedirectUrl(),
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      showToast("Password-reset email sent.", "success");
+    });
+
+    document.querySelector("#settings-sign-out")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Signing out…");
+      await detachPushSubscriptionForSignOut();
+      const { error } = await state.client.auth.signOut();
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      resetAppState();
+      showAuth("login");
+      showToast("Signed out. Your points are still imaginary, but safely stored.", "success");
     });
   }
 
@@ -1329,6 +1397,9 @@
         break;
       case "portfolio":
         renderPortfolio();
+        break;
+      case "settings":
+        void renderSettings();
         break;
       case "admin":
         if (state.profile.is_admin) {
@@ -4835,6 +4906,7 @@
 
     state.notificationAdminOverview = notificationResult.data || null;
     state.currentPushSubscriptionActive = Boolean(currentPushSubscription);
+    state.currentPushSubscriptionEndpoint = currentPushSubscription?.endpoint || null;
     dom.main.innerHTML = buildAdminInvitationMarkup(
       data || [],
       notificationResult.data || null,
@@ -4953,15 +5025,23 @@
           : ""}${delivery.last_error ? escapeHtml(delivery.last_error) : delivery.response_status ? "" : '<span class="muted">—</span>'}</td>
       </tr>
     `).join("");
-    const deviceOptions = state.pushSubscriptions.map((subscription) => `
-      <label class="notification-device-option">
-        <input type="checkbox" name="subscriptionId" value="${escapeAttribute(subscription.id)}" checked />
-        <span>
-          <strong>${escapeHtml(subscription.device_label)}</strong>
-          <small>Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}</small>
-        </span>
-      </label>
-    `).join("");
+    const deviceOptions = state.pushSubscriptions.map((subscription) => {
+      const isCurrentDevice = subscription.endpoint === state.currentPushSubscriptionEndpoint;
+      return `
+        <div class="notification-device-option">
+          <label class="notification-device-choice">
+            <input type="checkbox" name="subscriptionId" value="${escapeAttribute(subscription.id)}" checked />
+            <span>
+              <strong>${escapeHtml(subscription.device_label)}</strong>
+              <small>Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}</small>
+            </span>
+          </label>
+          ${isCurrentDevice
+            ? '<span class="tiny-pill notification-device-current">This device</span>'
+            : `<button class="text-button notification-device-remove" type="button" data-remove-push-subscription="${escapeAttribute(subscription.id)}">Remove stale device</button>`}
+        </div>
+      `;
+    }).join("");
 
     return `
       <section class="panel notification-lab-panel">
@@ -5052,7 +5132,7 @@
             <input id="notification-test-target" name="targetUrl" type="hidden" value="${escapeAttribute(template.targetUrl)}" />
             <fieldset class="notification-device-field">
               <legend>Your delivery devices</legend>
-              ${deviceOptions || '<p class="push-capability-note is-warning">Enable push from the notification bell on one of your devices. The test will still appear in your in-app inbox.</p>'}
+              ${deviceOptions || '<p class="push-capability-note is-warning">Enable push from Settings on one of your devices. The test will still create an administrator audit record.</p>'}
             </fieldset>
             <button class="button button-primary" type="submit">Send test to me</button>
           </form>
@@ -5079,7 +5159,10 @@
             <h2>Recent notification records</h2>
             <p>Shadow-mode records show the audience that would have been eligible in Live mode.</p>
           </div>
-          <span class="tiny-pill">${formatNumber((overview.notifications || []).length)} records</span>
+          <div class="admin-table-heading-actions">
+            <span class="tiny-pill">${formatNumber((overview.notifications || []).length)} records</span>
+            <button class="button button-danger button-small" id="clear-notification-test-history" type="button">Clear test history</button>
+          </div>
         </div>
         ${recentNotifications ? `
           <div data-scrollable-table><div class="table-scroll">
@@ -5304,7 +5387,7 @@
         <div>
           <p class="eyebrow">Enable live delivery</p>
           <h2>Open the notification desk?</h2>
-          <p>Future events will be filed in-app and pushed to opted-in member devices.</p>
+          <p>Future events will be recorded and pushed to opted-in member devices.</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
@@ -5322,9 +5405,68 @@
     });
   }
 
+  function openClearNotificationTestHistoryModal() {
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Clear test history</p>
+          <h2>Remove the testing paper trail?</h2>
+          <p>This cannot be undone.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0">
+          This permanently removes self-tests, Test-mode shadow records, and their delivery attempts.
+          Live notification records, push preferences, and enrolled devices will remain untouched.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Keep history</button>
+        <button class="button button-danger" id="confirm-clear-notification-test-history" type="button">Clear test history</button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-clear-notification-test-history")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Clearing…");
+      const { data, error } = await state.client.rpc("admin_clear_notification_test_history");
+
+      if (error) {
+        setButtonLoading(button, false);
+        showToast(error.message, "error");
+        return;
+      }
+
+      const notificationCount = Number(data?.notification_count) || 0;
+      const deliveryCount = Number(data?.delivery_count) || 0;
+      closeModal();
+      await renderAdmin();
+      showToast(
+        notificationCount
+          ? `Cleared ${formatNumber(notificationCount)} test ${pluralize(notificationCount, "record")} and ${formatNumber(deliveryCount)} delivery ${pluralize(deliveryCount, "attempt")}.`
+          : "There was no test history to clear.",
+        "success",
+      );
+    });
+  }
+
   function bindAdminNotificationLabEvents() {
     const overview = state.notificationAdminOverview;
     if (!overview) return;
+
+    document.querySelectorAll("[data-remove-push-subscription]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const subscription = state.pushSubscriptions.find(
+          (item) => item.id === button.dataset.removePushSubscription,
+        );
+        if (subscription) openRemovePushSubscriptionModal(subscription);
+      });
+    });
+
+    document.querySelector("#clear-notification-test-history")?.addEventListener("click", () => {
+      openClearNotificationTestHistoryModal();
+    });
 
     document.querySelector("#notification-mode-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -5396,12 +5538,58 @@
       await renderAdmin();
 
       if (!deliveryIds.length) {
-        showToast("Test filed in-app. Enable a push device to test lock-screen delivery.", "success");
+        showToast("Test record created. Enable a push device to test lock-screen delivery.", "success");
       } else if (failures) {
         showToast("Test filed, but one or more push attempts failed. Review the delivery table.", "error");
       } else {
         showToast("Test filed and dispatched to your selected devices.", "success");
       }
+    });
+  }
+
+  function openRemovePushSubscriptionModal(subscription) {
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Remove stale device</p>
+          <h2>Stop delivering to this record?</h2>
+          <p>${escapeHtml(subscription.device_label)}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0">
+          This removes the device from future push delivery while preserving its past delivery history.
+          Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Keep device</button>
+        <button class="button button-danger" id="confirm-remove-push-subscription" type="button">Remove stale device</button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-remove-push-subscription")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Removing…");
+      const { data, error } = await state.client.rpc("unregister_push_subscription", {
+        p_endpoint: subscription.endpoint,
+      });
+
+      if (error || data !== true) {
+        setButtonLoading(button, false);
+        showToast(error?.message || "That device is already inactive.", "error");
+        return;
+      }
+
+      closeModal();
+      await refreshNotificationData();
+      if (getRoute().page === "settings") {
+        await renderSettings();
+      } else if (getRoute().page === "admin") {
+        await renderAdmin();
+      }
+      showToast(`${subscription.device_label} was removed from push delivery.`, "success");
     });
   }
 
@@ -6251,102 +6439,6 @@
         </label>
       `),
     ].join("");
-  }
-
-  function openAccountModal() {
-    const iconChoices = buildProfileIconChoices(state.profile);
-
-    openModal(`
-      <div class="modal-header">
-        <div>
-          <p class="eyebrow">Your account</p>
-          <h2>${escapeHtml(state.profile.display_name)}</h2>
-          <p>${escapeHtml(state.user?.email || "Email account")} · available across devices</p>
-        </div>
-        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
-      </div>
-      <form id="account-form">
-        <div class="modal-body">
-          <div class="portfolio-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:20px">
-            <div class="portfolio-stat">
-              <span>Balance</span>
-              <strong>${formatNumber(state.profile.balance)}</strong>
-            </div>
-            <div class="portfolio-stat">
-              <span>Account type</span>
-              <strong>${state.profile.is_admin ? "Admin" : "Trader"}</strong>
-            </div>
-          </div>
-          <div class="form-field">
-            <label for="account-name">Display name</label>
-            <input id="account-name" name="displayName" minlength="2" maxlength="32" value="${escapeAttribute(state.profile.display_name)}" required />
-          </div>
-          <fieldset class="profile-icon-field" aria-describedby="profile-icon-help">
-            <legend>Profile icon</legend>
-            <p id="profile-icon-help">Choose how you appear on the leaderboard.</p>
-            <div class="profile-icon-grid">
-              ${iconChoices}
-            </div>
-          </fieldset>
-          <p class="trade-warning">
-            Your email and password let you access the same balance, predictions, and markets from any device.
-            To change a forgotten password, sign out and use the password-reset link on the login screen.
-          </p>
-        </div>
-        <div class="modal-footer">
-          <button class="button button-ghost" id="account-sign-out" type="button">Sign out</button>
-          <button class="button button-primary" type="submit">Save changes</button>
-        </div>
-      </form>
-    `, "account-modal");
-
-    document.querySelector("#account-sign-out").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      setButtonLoading(button, true, "Signing out…");
-      await detachPushSubscriptionForSignOut();
-      const { error } = await state.client.auth.signOut();
-      setButtonLoading(button, false);
-
-      if (error) {
-        showToast(error.message, "error");
-        return;
-      }
-
-      closeModal();
-      resetAppState();
-      showAuth("login");
-      showToast("Signed out. Your points are still imaginary, but safely stored.", "success");
-    });
-
-    const accountNameInput = document.querySelector("#account-name");
-    const initialsPreview = document.querySelector(".profile-icon-initials");
-    accountNameInput.addEventListener("input", () => {
-      initialsPreview.textContent = initials(accountNameInput.value);
-    });
-
-    document.querySelector("#account-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const formData = new FormData(event.currentTarget);
-      const name = String(formData.get("displayName") || "").trim();
-      const profileIcon = normalizeProfileIcon(formData.get("profileIcon"));
-      const button = event.currentTarget.querySelector("button[type='submit']");
-
-      setButtonLoading(button, true, "Saving…");
-      const { error } = await state.client.rpc("update_profile", {
-        p_display_name: name,
-        p_profile_icon: profileIcon,
-      });
-      setButtonLoading(button, false);
-
-      if (error) {
-        showToast(error.message, "error");
-        return;
-      }
-
-      closeModal();
-      await refreshData({ quiet: true });
-      showToast("Profile updated.", "success");
-    });
   }
 
   function openAdminProfileModal() {

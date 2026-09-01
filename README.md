@@ -26,12 +26,13 @@ There is no build step, package manager, framework, or custom server.
   90 days
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
-- A complete in-app notification inbox for new markets, scheduled closing
-  reminders, resolutions, and voids
+- A dedicated Settings page for profile, account access, push preferences, and
+  enrolled-device cleanup
 - Per-device, opt-in Web Push preferences for new markets, closing soon, and
   resolution or void alerts
 - An administrator Notification Lab with lock-screen previews, self-only test
-  delivery, delivery diagnostics, and Off/Test/Live rollout controls
+  delivery, delivery diagnostics, test-history cleanup, and Off/Test/Live
+  rollout controls
 - Aggregated monthly allowance distributions in the exchange activity feed
 - Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
@@ -121,12 +122,17 @@ project.
 For an existing installation, apply each newer file in `migrations/` instead
 of re-running the complete setup. Notification support is installed by
 `migrations/20260901_notifications.sql`; it leaves delivery **Off**.
+Existing notification installations should also apply
+`migrations/20260901_notification_test_history_cleanup.sql` to enable the
+admin-only **Clear test history** action.
 
 ## 2. Configure notification delivery
 
-The in-app inbox is stored entirely in Postgres. Background push adds one
-Supabase Edge Function, a database webhook, and a standard Web Push VAPID key
-pair. Email is not used as a notification fallback.
+Notification and recipient records are stored in Postgres for delivery and
+administrator auditing. Members use the Markets activity feed as the visible
+event history and the Settings page to control push. Background delivery adds
+one Supabase Edge Function, a database webhook, and a standard Web Push VAPID
+key pair. Email is not used as a notification fallback.
 
 ### Generate the Web Push keys
 
@@ -191,7 +197,8 @@ Publish the updated browser files, sign in as an administrator, and open
 **Admin → Notification Lab**:
 
 1. Leave the system **Off** while checking the configuration.
-2. Enable push from the bell on each administrator device.
+2. Open the gear, then enable push under **Settings → Push notifications** on
+   each administrator device.
 3. Send self-only tests and review the delivery table.
 4. Change the mode to **Test** to create shadow notifications for real market
    events while restricting recipients to administrators.
@@ -442,12 +449,12 @@ members whose latest sign-in was within the preceding 90 days. Open browsers
 announce the award after the real-time balance refresh; browsers that were
 closed or offline announce unseen allowances on the next launch.
 
-Market lifecycle triggers create notification records in the same transaction
-as a successful market action. In-app recipients are protected by Row Level
-Security and user-scoped database functions. Opt-in push deliveries are queued
-per active device, sent by a Supabase Edge Function, and retained with status
-and error details for the administrator. The private VAPID key and webhook
-secret exist only in Supabase Function Secrets.
+Market lifecycle triggers create notification and recipient audit records in
+the same transaction as a successful market action. Members see those events
+in the Markets activity feed instead of a duplicate inbox. Opt-in push
+deliveries are queued per active device, sent by a Supabase Edge Function, and
+retained with status and error details for the administrator. The private VAPID
+key and webhook secret exist only in Supabase Function Secrets.
 
 The browser may read the exchange information needed for markets, activity,
 leaderboards, and portfolios. It cannot directly change balances, insert
