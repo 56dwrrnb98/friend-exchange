@@ -26,6 +26,7 @@ There is no build step, package manager, framework, or custom server.
   90 days
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
+- Aggregated monthly allowance distributions in the exchange activity feed
 - Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
 - Scheduled markets and markets that remain open until the outcome becomes known
@@ -44,8 +45,9 @@ There is no build step, package manager, framework, or custom server.
 - Automatic refunds for predictions submitted at or after the eligibility cutoff
 - Market voiding with automatic refunds
 - Administrator controls for the invitation registry, trader profiles, point
-  adjustments, open-market corrections, early resolution, voided-market
-  archiving/restoration, and deletion of empty voided markets
+  adjustments, open-market wording and outcome-label corrections, early
+  resolution, voided-market archiving/restoration, and deletion of empty
+  voided markets
 - Active, resolved, voided, and archived market views
 - Cross-market and per-market activity, sortable performance leaderboards,
   market history, and filterable/sortable personal portfolio views

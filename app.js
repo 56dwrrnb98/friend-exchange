@@ -126,6 +126,7 @@
     outcomes: [],
     predictions: [],
     payouts: [],
+    allowanceActivity: [],
     marketFilter: "active",
     activityExpanded: false,
     marketActivityView: "recent",
@@ -491,6 +492,7 @@
     state.outcomes = [];
     state.predictions = [];
     state.payouts = [];
+    state.allowanceActivity = [];
     state.marketFilter = "active";
     state.activityExpanded = false;
     state.marketActivityView = "recent";
@@ -529,14 +531,21 @@
 
     if (!quiet) renderLoading();
 
-    const [profilesResult, marketsResult, outcomesResult, predictionsResult, payoutsResult] =
-      await Promise.all([
-        state.client.from("profiles").select("id, display_name, profile_icon, balance, is_admin, created_at"),
-        state.client.from("markets").select("*").order("created_at", { ascending: false }),
-        state.client.from("outcomes").select("*").order("sort_order", { ascending: true }),
-        state.client.from("predictions").select("*").order("created_at", { ascending: false }),
-        state.client.from("market_payouts").select("*"),
-      ]);
+    const [
+      profilesResult,
+      marketsResult,
+      outcomesResult,
+      predictionsResult,
+      payoutsResult,
+      allowanceActivityResult,
+    ] = await Promise.all([
+      state.client.from("profiles").select("id, display_name, profile_icon, balance, is_admin, created_at"),
+      state.client.from("markets").select("*").order("created_at", { ascending: false }),
+      state.client.from("outcomes").select("*").order("sort_order", { ascending: true }),
+      state.client.from("predictions").select("*").order("created_at", { ascending: false }),
+      state.client.from("market_payouts").select("*"),
+      state.client.rpc("list_monthly_allowance_activity"),
+    ]);
 
     state.loading = false;
 
@@ -546,6 +555,7 @@
       outcomesResult.error,
       predictionsResult.error,
       payoutsResult.error,
+      allowanceActivityResult.error,
     ].find(Boolean);
 
     if (firstError) {
@@ -558,6 +568,7 @@
     state.outcomes = outcomesResult.data || [];
     state.predictions = predictionsResult.data || [];
     state.payouts = payoutsResult.data || [];
+    state.allowanceActivity = allowanceActivityResult.data || [];
     state.profile = state.profiles.find((profile) => profile.id === state.user.id) || null;
 
     if (!state.profile) {
@@ -2104,6 +2115,29 @@
     const events = [];
     const now = Date.now();
 
+    state.allowanceActivity.forEach((allowance) => {
+      const timestamp = getTimestamp(allowance.credited_at);
+      const amountPerTrader = Number(allowance.amount_per_trader || 0);
+      const traderCount = Number(allowance.trader_count || 0);
+      if (
+        !Number.isFinite(timestamp) ||
+        amountPerTrader <= 0 ||
+        traderCount <= 0
+      ) return;
+
+      events.push({
+        id: `allowance:${allowance.allowance_period}`,
+        type: "allowance",
+        timestamp,
+        timestampIso: allowance.credited_at,
+        allowanceMonth: formatAllowanceMonth(allowance.allowance_period),
+        context: "Another round of fictional capital has entered circulation.",
+        summary: `${formatNumber(amountPerTrader)} pts credited to ${formatNumber(traderCount)} active ${pluralize(traderCount, "trader")}`,
+        insights: [],
+        sortPriority: 70,
+      });
+    });
+
     state.profiles.forEach((profile) => {
       const timestamp = getTimestamp(profile.created_at);
       if (!Number.isFinite(timestamp)) return;
@@ -2288,6 +2322,8 @@
         return `<strong>Result official: ${outcome}</strong>`;
       case "void":
         return "<strong>Market voided</strong>";
+      case "allowance":
+        return `<strong>${escapeHtml(event.allowanceMonth)} allowances issued</strong>`;
       case "joined":
         return `<strong>${name}</strong><span> entered the exchange</span>`;
       default:
@@ -2296,13 +2332,15 @@
   }
 
   function renderExchangeActivityIcon(event) {
-    const icon = event.type === "closed"
-      ? "lock"
-      : event.type === "resolved"
-        ? "stamp"
-        : event.type === "void"
-          ? "ban"
-          : null;
+    const icon = event.type === "allowance"
+      ? "piggy-bank"
+      : event.type === "closed"
+        ? "lock"
+        : event.type === "resolved"
+          ? "stamp"
+          : event.type === "void"
+            ? "ban"
+            : null;
     if (!icon && event.actor) return renderProfileAvatar(event.actor);
     return `
       <span class="exchange-activity-system-icon" aria-hidden="true">
@@ -2314,6 +2352,7 @@
   function renderExchangeActivityEvent(event, index) {
     const tag = event.market ? "a" : "div";
     const href = event.market ? ` href="#/market/${event.market.id}"` : "";
+    const context = event.market?.question || event.context || "";
     const details = [event.summary, ...(event.insights || [])]
       .filter(Boolean)
       .slice(0, 2);
@@ -2326,7 +2365,7 @@
         ${renderExchangeActivityIcon(event)}
         <span class="exchange-activity-copy">
           <span class="exchange-activity-primary">${renderExchangeActivityPrimary(event)}</span>
-          ${event.market ? `<span class="exchange-activity-market">${escapeHtml(event.market.question)}</span>` : ""}
+          ${context ? `<span class="exchange-activity-market">${escapeHtml(context)}</span>` : ""}
           ${details.map((detail) => `<span class="exchange-activity-detail">${escapeHtml(detail)}</span>`).join("")}
           <time datetime="${escapeAttribute(event.timestampIso)}" title="${escapeAttribute(formatDateTime(event.timestampIso))}">${formatRelativeDate(event.timestampIso)}</time>
         </span>
@@ -4910,6 +4949,11 @@
   function openEditMarketModal(market) {
     if (!state.profile?.is_admin || market.status !== "open") return;
     const currentCloseMode = market.closeMode || market.close_mode || "date";
+    const editableOutcomes = [
+      ...(Array.isArray(market.outcomes)
+        ? market.outcomes
+        : state.outcomes.filter((outcome) => outcome.market_id === market.id)),
+    ].sort((first, second) => Number(first.sort_order || 0) - Number(second.sort_order || 0));
     const editCloseValue = toLocalDateTimeInput(
       market.closes_at ? new Date(market.closes_at) : new Date(Date.now() + 24 * 60 * 60 * 1000),
     );
@@ -4919,7 +4963,7 @@
         <div>
           <p class="eyebrow">Administrator correction</p>
           <h2>Edit market.</h2>
-          <p>Outcomes and prediction history remain unchanged.</p>
+          <p>Correct the market without changing its positions or prediction history.</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
@@ -4951,6 +4995,26 @@
               </div>
             </div>
             <div class="form-field form-field-full">
+              <span class="field-label">Outcome names</span>
+              <div class="edit-market-outcomes" aria-describedby="edit-market-outcomes-help">
+                ${editableOutcomes.map((outcome, index) => `
+                  <div class="edit-market-outcome-row">
+                    <span class="choice-handle" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
+                    <input
+                      id="edit-market-outcome-${outcome.id}"
+                      name="outcome-${outcome.id}"
+                      type="text"
+                      maxlength="80"
+                      value="${escapeAttribute(outcome.label)}"
+                      aria-label="Outcome ${index + 1}"
+                      required
+                    />
+                  </div>
+                `).join("")}
+              </div>
+              <small id="edit-market-outcomes-help">Correct the labels only. Outcomes cannot be added, removed, or reordered.</small>
+            </div>
+            <div class="form-field form-field-full">
               <label for="edit-market-close-mode">Closing rule</label>
               <select id="edit-market-close-mode" name="closeMode">
                 <option value="date"${currentCloseMode === "date" ? " selected" : ""}>Open until date</option>
@@ -4971,7 +5035,7 @@
             </div>
           </div>
           <p class="trade-warning">
-            This is an admin-only correction. Existing predictions are final, so outcome names cannot be edited.
+            This admin-only correction changes outcome names everywhere. Existing predictions stay attached to the same outcomes.
           </p>
         </div>
         <div class="modal-footer">
@@ -5003,6 +5067,10 @@
       const question = String(form.get("question") || "").trim();
       const description = String(form.get("description") || "").trim();
       const closeMode = String(form.get("closeMode") || "date");
+      const outcomeEdits = editableOutcomes.map((outcome) => ({
+        id: outcome.id,
+        label: String(form.get(`outcome-${outcome.id}`) || "").trim(),
+      }));
       const closesAt = closeMode === "date"
         ? new Date(String(form.get("closesAt") || ""))
         : null;
@@ -5010,6 +5078,21 @@
 
       if (question.length < 5 || question.length > 180) {
         showToast("Questions must be between 5 and 180 characters.", "error");
+        return;
+      }
+
+      if (
+        outcomeEdits.length < 2 ||
+        outcomeEdits.length > MAX_MARKET_OUTCOMES ||
+        outcomeEdits.some(({ label }) => label.length < 1 || label.length > 80)
+      ) {
+        showToast("Each outcome must be between 1 and 80 characters.", "error");
+        return;
+      }
+
+      const normalizedOutcomeLabels = outcomeEdits.map(({ label }) => label.toLocaleLowerCase());
+      if (new Set(normalizedOutcomeLabels).size !== normalizedOutcomeLabels.length) {
+        showToast("Each outcome needs a unique name.", "error");
         return;
       }
 
@@ -5028,6 +5111,7 @@
         p_description: description || null,
         p_close_mode: closeMode,
         p_closes_at: closesAt ? closesAt.toISOString() : null,
+        p_outcomes: outcomeEdits,
       });
       setButtonLoading(button, false);
 
@@ -5705,6 +5789,16 @@
       year: date.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
       hour: "numeric",
       minute: "2-digit",
+    }).format(date);
+  }
+
+  function formatAllowanceMonth(value) {
+    const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(String(value || ""));
+    if (!match) return "Monthly";
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+    return new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      timeZone: "UTC",
     }).format(date);
   }
 

@@ -691,12 +691,15 @@ begin
 end;
 $$;
 
+drop function if exists public.edit_market(bigint, text, text, text, timestamptz);
+
 create or replace function public.edit_market(
   p_market_id bigint,
   p_question text,
   p_description text,
   p_close_mode text,
-  p_closes_at timestamptz
+  p_closes_at timestamptz,
+  p_outcomes jsonb
 )
 returns bigint
 language plpgsql
@@ -710,6 +713,8 @@ declare
   v_question text := btrim(coalesce(p_question, ''));
   v_description text := nullif(btrim(coalesce(p_description, '')), '');
   v_close_mode text := lower(btrim(coalesce(p_close_mode, '')));
+  v_outcome_count integer;
+  v_existing_outcome_count integer;
 begin
   if v_user_id is null then
     raise exception 'You must be signed in.';
@@ -758,6 +763,69 @@ begin
     raise exception 'Only open markets can be edited.';
   end if;
 
+  if p_outcomes is null or jsonb_typeof(p_outcomes) <> 'array' then
+    raise exception 'Include every existing outcome.';
+  end if;
+
+  v_outcome_count := jsonb_array_length(p_outcomes);
+
+  select count(*)
+  into v_existing_outcome_count
+  from public.outcomes
+  where market_id = p_market_id;
+
+  if v_outcome_count <> v_existing_outcome_count then
+    raise exception 'Outcomes cannot be added or removed.';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_outcomes) as item(value)
+    where jsonb_typeof(item.value) <> 'object'
+       or coalesce(item.value ->> 'id', '') !~ '^[0-9]+$'
+  ) then
+    raise exception 'Every outcome correction must include a valid outcome ID.';
+  end if;
+
+  if (
+    select count(*) <> count(distinct (item.value ->> 'id')::bigint)
+    from jsonb_array_elements(p_outcomes) as item(value)
+  ) then
+    raise exception 'Each existing outcome must be included exactly once.';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_outcomes) as item(value)
+    where char_length(btrim(coalesce(item.value ->> 'label', ''))) < 1
+       or char_length(btrim(coalesce(item.value ->> 'label', ''))) > 80
+  ) then
+    raise exception 'Each outcome must be between 1 and 80 characters.';
+  end if;
+
+  if (
+    select count(*) <> count(distinct lower(btrim(item.value ->> 'label')))
+    from jsonb_array_elements(p_outcomes) as item(value)
+  ) then
+    raise exception 'Outcome names must be unique.';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_outcomes) as item(value)
+    left join public.outcomes as outcome
+      on outcome.id = (item.value ->> 'id')::bigint
+     and outcome.market_id = p_market_id
+    where outcome.id is null
+  ) then
+    raise exception 'Outcome corrections must belong to this market.';
+  end if;
+
+  perform 1
+  from public.outcomes
+  where market_id = p_market_id
+  for update;
+
   update public.markets
   set
     question = v_question,
@@ -765,6 +833,12 @@ begin
     close_mode = v_close_mode,
     closes_at = p_closes_at
   where id = p_market_id;
+
+  update public.outcomes as outcome
+  set label = btrim(edit.label)
+  from jsonb_to_recordset(p_outcomes) as edit(id bigint, label text)
+  where outcome.id = edit.id
+    and outcome.market_id = p_market_id;
 
   return p_market_id;
 end;
@@ -1631,6 +1705,43 @@ begin
 end;
 $$;
 
+create or replace function public.list_monthly_allowance_activity()
+returns table (
+  allowance_period date,
+  credited_at timestamptz,
+  amount_per_trader bigint,
+  trader_count bigint,
+  total_amount bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  return query
+  select
+    transaction.allowance_period,
+    min(transaction.created_at) as credited_at,
+    case
+      when min(transaction.amount) = max(transaction.amount)
+        then min(transaction.amount)
+      else null
+    end as amount_per_trader,
+    count(*)::bigint as trader_count,
+    sum(transaction.amount)::bigint as total_amount
+  from public.point_transactions as transaction
+  where transaction.kind = 'monthly_allowance'
+    and transaction.allowance_period is not null
+  group by transaction.allowance_period
+  order by transaction.allowance_period desc;
+end;
+$$;
+
 create or replace function public.get_pending_allowance_notice()
 returns jsonb
 language plpgsql
@@ -1846,7 +1957,7 @@ revoke all on function public.update_display_name(text) from public, anon;
 revoke all on function public.update_profile(text, text) from public, anon;
 revoke all on function public.admin_update_profile(uuid, text, text) from public, anon;
 revoke all on function public.create_market(text, text, text, timestamptz, text[]) from public, anon;
-revoke all on function public.edit_market(bigint, text, text, text, timestamptz) from public, anon;
+revoke all on function public.edit_market(bigint, text, text, text, timestamptz, jsonb) from public, anon;
 revoke all on function public.place_prediction(bigint, bigint, bigint) from public, anon;
 revoke all on function public.resolve_market(bigint, bigint, text, timestamptz, text) from public, anon;
 revoke all on function public.void_market(bigint) from public, anon;
@@ -1862,6 +1973,7 @@ revoke all on function public.add_approved_signup_email(text)
 revoke all on function public.remove_approved_signup_email(text)
   from public, anon;
 revoke all on function public.grant_monthly_allowance(date) from public, anon, authenticated;
+revoke all on function public.list_monthly_allowance_activity() from public, anon;
 revoke all on function public.get_pending_allowance_notice() from public, anon;
 revoke all on function public.acknowledge_monthly_allowances(date) from public, anon;
 
@@ -1869,7 +1981,7 @@ grant execute on function public.update_display_name(text) to authenticated;
 grant execute on function public.update_profile(text, text) to authenticated;
 grant execute on function public.admin_update_profile(uuid, text, text) to authenticated;
 grant execute on function public.create_market(text, text, text, timestamptz, text[]) to authenticated;
-grant execute on function public.edit_market(bigint, text, text, text, timestamptz) to authenticated;
+grant execute on function public.edit_market(bigint, text, text, text, timestamptz, jsonb) to authenticated;
 grant execute on function public.place_prediction(bigint, bigint, bigint) to authenticated;
 grant execute on function public.resolve_market(bigint, bigint, text, timestamptz, text) to authenticated;
 grant execute on function public.void_market(bigint) to authenticated;
@@ -1883,6 +1995,8 @@ grant execute on function public.list_approved_signup_emails()
 grant execute on function public.add_approved_signup_email(text)
   to authenticated;
 grant execute on function public.remove_approved_signup_email(text)
+  to authenticated;
+grant execute on function public.list_monthly_allowance_activity()
   to authenticated;
 grant execute on function public.get_pending_allowance_notice()
   to authenticated;
