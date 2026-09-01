@@ -1,6 +1,7 @@
 {
   "name": "The Friend Exchange",
   "short_name": "Friend Exchange",
+  "id": ".",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#f4f2e9",

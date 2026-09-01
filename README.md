@@ -26,6 +26,12 @@ There is no build step, package manager, framework, or custom server.
   90 days
 - Immediate or next-launch monthly allowance announcements, with accumulated
   awards combined into one notice
+- A complete in-app notification inbox for new markets, scheduled closing
+  reminders, resolutions, and voids
+- Per-device, opt-in Web Push preferences for new markets, closing soon, and
+  resolution or void alerts
+- An administrator Notification Lab with lock-screen previews, self-only test
+  delivery, delivery diagnostics, and Off/Test/Live rollout controls
 - Aggregated monthly allowance distributions in the exchange activity feed
 - Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
@@ -112,7 +118,89 @@ payout logic, database functions, monthly allowance schedule, and real-time
 publication configuration. Run the complete file once on a new Supabase
 project.
 
-## 2. Configure email authentication
+For an existing installation, apply each newer file in `migrations/` instead
+of re-running the complete setup. Notification support is installed by
+`migrations/20260901_notifications.sql`; it leaves delivery **Off**.
+
+## 2. Configure notification delivery
+
+The in-app inbox is stored entirely in Postgres. Background push adds one
+Supabase Edge Function, a database webhook, and a standard Web Push VAPID key
+pair. Email is not used as a notification fallback.
+
+### Generate the Web Push keys
+
+Generate one VAPID key pair and preserve it for the lifetime of the deployment.
+One option on a machine with Node.js is:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Put only the generated **public** key in `config.js` as
+`vapidPublicKey`. Never put the private key in a browser file or commit it to
+the repository.
+
+In **Supabase → Edge Functions → Secrets**, add:
+
+- `VAPID_PUBLIC_KEY`: the generated public key
+- `VAPID_PRIVATE_KEY`: the generated private key
+- `VAPID_SUBJECT`: an administrative contact such as `mailto:you@example.com`
+  or the published HTTPS site URL
+- `NOTIFICATION_WEBHOOK_SECRET`: a long, randomly generated value used only by
+  the database webhook and Edge Function
+
+The placeholder names are documented in
+`supabase/functions/.env.example`; the example file contains no live secrets.
+
+### Deploy the delivery function
+
+Link the repository to the existing Supabase project, then deploy the checked-in
+function:
+
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_ID
+supabase functions deploy notification-delivery
+```
+
+The checked-in `supabase/config.toml` disables the platform JWT gate for this
+one endpoint because the database webhook does not carry a member session. The
+function still authenticates every request itself: it requires either the
+private webhook secret or a signed-in administrator session.
+
+### Connect the database webhook
+
+In **Supabase → Database → Webhooks**, create a webhook with:
+
+- Table: `public.notification_deliveries`
+- Event: `INSERT`
+- Method: `POST`
+- Destination: the deployed `notification-delivery` Edge Function
+- Header: `x-notification-secret` with the same value stored in
+  `NOTIFICATION_WEBHOOK_SECRET`
+
+The webhook dispatches each queued device delivery after the database
+transaction commits. The Edge Function claims each delivery before sending, so
+webhook retries and an administrator test dispatch cannot produce duplicate
+pushes.
+
+### Activate through the Notification Lab
+
+Publish the updated browser files, sign in as an administrator, and open
+**Admin → Notification Lab**:
+
+1. Leave the system **Off** while checking the configuration.
+2. Enable push from the bell on each administrator device.
+3. Send self-only tests and review the delivery table.
+4. Change the mode to **Test** to create shadow notifications for real market
+   events while restricting recipients to administrators.
+5. Change the mode to **Live** only after testing is complete.
+
+Test and shadow records are never delivered retroactively when Live mode is
+enabled. Turning the mode Off is the immediate delivery kill switch.
+
+## 3. Configure email authentication
 
 In the Supabase dashboard:
 
@@ -140,7 +228,7 @@ documentation](https://supabase.com/docs/guides/auth/auth-smtp) for provider
 requirements. [Resend](https://resend.com) is one available SMTP provider, but
 the application does not depend on a particular service.
 
-## 3. Approve the first administrator email
+## 4. Approve the first administrator email
 
 Registration is restricted to email addresses recorded in the invitation
 registry. Before enabling the registration hook, add the email address you will
@@ -167,7 +255,7 @@ See the [Supabase Before User Created hook
 documentation](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook)
 for additional details.
 
-## 4. Configure application URLs
+## 5. Configure application URLs
 
 In Supabase:
 
@@ -190,7 +278,7 @@ See the [Supabase redirect URL
 documentation](https://supabase.com/docs/guides/auth/redirect-urls) for supported
 URL patterns.
 
-## 5. Add your Supabase project information
+## 6. Add your Supabase project information
 
 In Supabase:
 
@@ -205,6 +293,7 @@ Copy `config.example.js` to `config.js`, then replace the placeholders:
 window.FRIEND_EXCHANGE_CONFIG = {
   supabaseUrl: "https://YOUR-PROJECT.supabase.co",
   supabasePublishableKey: "YOUR-PUBLISHABLE-KEY",
+  vapidPublicKey: "YOUR-PUBLIC-VAPID-KEY",
   appName: "The Friend Exchange",
   tagline: "Markets of consequence. Sort of.",
 };
@@ -215,11 +304,13 @@ Publishable keys are designed to be visible in browser applications. The
 included Row Level Security policies and database functions protect balances,
 predictions, results, and administrator actions.
 
-Never place a Secret key or `service_role` key in `config.js`.
+Never place a Secret key, `service_role` key, VAPID private key, or webhook
+secret in `config.js`.
 
 ### Optional branding and metadata
 
-`appName` and `tagline` customize the name and tagline shown on the account
+`vapidPublicKey` is the browser-safe half of the Web Push key pair. `appName`
+and `tagline` customize the name and tagline shown on the account
 screen and in the application header. For a fully branded installation, also
 update the page title, description, canonical URL, Open Graph metadata, icons,
 and manifest links in `index.html`; update the name, colors, and icons in
@@ -228,7 +319,7 @@ and manifest links in `index.html`; update the name, colors, and icons in
 Set public metadata URLs to your own deployed address. Relative asset URLs are
 the simplest choice when the site may be published below a repository path.
 
-## 6. Run the application locally
+## 7. Run the application locally
 
 Opening `index.html` directly is not recommended because authentication
 redirects work more reliably through a local web server.
@@ -249,7 +340,7 @@ Alternatively, use a local static-server tool such as the VS Code Live Server
 extension. Add the exact local address to Supabase's redirect allowlist before
 testing authentication or password recovery.
 
-## 7. Create the first administrator
+## 8. Create the first administrator
 
 1. Open the application and choose **Create account**.
 2. Register with the email address approved earlier.
@@ -268,7 +359,7 @@ where profile.id = auth_user.id
 Refresh the application. The Administration area should now be available.
 Use it to approve additional member email addresses and manage the exchange.
 
-## 8. Publish the site
+## 9. Publish the site
 
 The published site needs these runtime files:
 
@@ -277,6 +368,7 @@ The published site needs these runtime files:
 - `app.js`
 - `config.js`
 - `site.webmanifest`
+- `service-worker.js`
 - `favicon.ico`
 - The `img/` directory
 
@@ -308,6 +400,10 @@ site URL itself can be shared freely.
 ```text
 project/
 ├── img/                Icons, favicons, and link-preview artwork
+├── migrations/         Existing-project database upgrades
+├── supabase/
+│   ├── config.toml     Edge Function authentication configuration
+│   └── functions/      Server-side Web Push delivery
 ├── tests/
 │   └── phase1.test.js Local front-end, SQL-definition, and calculation checks
 ├── index.html         Application structure, account screens, and metadata
@@ -316,6 +412,7 @@ project/
 ├── config.js          Public Supabase configuration and visible app name
 ├── config.example.js  Placeholder configuration template
 ├── database.sql       Complete database setup for a new project
+├── service-worker.js  Background push display and notification-click routing
 ├── site.webmanifest   Browser installation metadata
 ├── favicon.ico        Legacy browser icon
 └── README.md          Setup, architecture, and usage instructions
@@ -345,6 +442,13 @@ members whose latest sign-in was within the preceding 90 days. Open browsers
 announce the award after the real-time balance refresh; browsers that were
 closed or offline announce unseen allowances on the next launch.
 
+Market lifecycle triggers create notification records in the same transaction
+as a successful market action. In-app recipients are protected by Row Level
+Security and user-scoped database functions. Opt-in push deliveries are queued
+per active device, sent by a Supabase Edge Function, and retained with status
+and error details for the administrator. The private VAPID key and webhook
+secret exist only in Supabase Function Secrets.
+
 The browser may read the exchange information needed for markets, activity,
 leaderboards, and portfolios. It cannot directly change balances, insert
 predictions, resolve markets, award points, or read the invitation registry.
@@ -369,7 +473,7 @@ The Friend Exchange is designed for a small, trusted community.
 - Markets are resolved manually by their creator or an administrator; the
   application does not determine real-world outcomes automatically.
 - Display names are not required to be unique.
-- There are no comments, general-purpose notifications, images, market
+- There are no comments, notification email fallback, images, market
   categories, or search.
 - The application loads the complete small-community dataset at once. A large
   public deployment would require pagination and more selective queries.

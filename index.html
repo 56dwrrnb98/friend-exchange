@@ -310,10 +310,21 @@
           <a id="admin-nav-link" class="hidden" data-nav href="#/admin">Admin</a>
         </nav>
 
-        <button id="balance-button" class="balance-pill" type="button">
-          <span>Balance</span>
-          <strong id="header-balance">—</strong>
-        </button>
+        <div class="header-actions">
+          <button
+            id="notification-button"
+            class="notification-button hidden"
+            type="button"
+            aria-label="Open notifications"
+          >
+            <i class="fa-regular fa-bell" aria-hidden="true"></i>
+            <span id="notification-badge" class="notification-badge hidden" aria-hidden="true">0</span>
+          </button>
+          <button id="balance-button" class="balance-pill" type="button">
+            <span>Balance</span>
+            <strong id="header-balance">—</strong>
+          </button>
+        </div>
       </header>
 
       <main id="main-content" class="main-content" tabindex="-1"></main>

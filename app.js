@@ -49,6 +49,12 @@
     position: "Group by position",
   });
   const MARKET_ACTIVITY_VIEWS = new Set(Object.keys(MARKET_ACTIVITY_VIEW_LABELS));
+  const NOTIFICATION_KIND_LABELS = Object.freeze({
+    new_market: "New market",
+    closing_soon: "Closing soon",
+    resolution: "Resolution",
+    void: "Voided market",
+  });
   const ODDS_HISTORY_COLORS = Object.freeze([
     "#101b18",
     "#327ca5",
@@ -115,6 +121,8 @@
     adminNavLink: document.querySelector("#admin-nav-link"),
     adminMobileNavLink: document.querySelector("#admin-mobile-nav-link"),
     mobileNav: document.querySelector(".mobile-nav"),
+    notificationButton: document.querySelector("#notification-button"),
+    notificationBadge: document.querySelector("#notification-badge"),
   };
 
   const state = {
@@ -151,6 +159,19 @@
     pendingAllowanceNotice: null,
     authSubscription: null,
     passwordRecovery: false,
+    notifications: [],
+    notificationPreferences: {
+      new_market_push: false,
+      closing_soon_push: false,
+      resolution_push: false,
+      active_subscription_count: 0,
+    },
+    pushSubscriptions: [],
+    notificationAvailable: false,
+    notificationRefreshing: false,
+    serviceWorkerRegistration: null,
+    currentPushSubscriptionActive: false,
+    notificationAdminOverview: null,
   };
 
   document.querySelector("#join-app-name").textContent = config.appName || "The Friend Exchange";
@@ -259,6 +280,10 @@
 
     dom.balanceButton.addEventListener("click", () => {
       openAccountModal();
+    });
+
+    dom.notificationButton.addEventListener("click", () => {
+      void openNotificationCenter();
     });
 
     dom.modalRoot.addEventListener("click", (event) => {
@@ -506,6 +531,19 @@
     state.selectedOutcomeByMarket = new Map();
     state.lastRenderedMarketOdds = new Map();
     state.loading = false;
+    state.notifications = [];
+    state.notificationPreferences = {
+      new_market_push: false,
+      closing_soon_push: false,
+      resolution_push: false,
+      active_subscription_count: 0,
+    };
+    state.pushSubscriptions = [];
+    state.notificationAvailable = false;
+    state.notificationRefreshing = false;
+    state.serviceWorkerRegistration = null;
+    state.currentPushSubscriptionActive = false;
+    state.notificationAdminOverview = null;
     closeModal({ acknowledgeAllowance: false });
   }
 
@@ -520,6 +558,7 @@
     }
 
     setupAllowanceNoticeChannel();
+    void preparePushServiceWorker();
     renderLoading();
     await refreshData();
     subscribeToChanges();
@@ -578,6 +617,7 @@
       return;
     }
 
+    await refreshNotificationData();
     updateHeader();
     renderRoute();
     void checkPendingAllowanceNotice();
@@ -591,6 +631,10 @@
       state.realtimeTimer = window.setTimeout(() => refreshData({ quiet: true }), 500);
     };
 
+    const queueNotificationRefresh = () => {
+      window.setTimeout(() => refreshNotificationData(), 200);
+    };
+
     state.realtimeChannel = state.client
       .channel("friend-exchange-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "markets" }, queueRefresh)
@@ -598,6 +642,11 @@
       .on("postgres_changes", { event: "*", schema: "public", table: "predictions" }, queueRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, queueRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "market_payouts" }, queueRefresh)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notification_recipients" },
+        queueNotificationRefresh,
+      )
       .subscribe();
   }
 
@@ -607,6 +656,429 @@
     dom.adminNavLink.classList.toggle("hidden", !isAdmin);
     dom.adminMobileNavLink.classList.toggle("hidden", !isAdmin);
     dom.mobileNav.classList.toggle("admin-visible", isAdmin);
+    const unreadCount = state.notifications.filter((notification) => !notification.read_at).length;
+    dom.notificationButton.classList.toggle("hidden", !state.notificationAvailable);
+    dom.notificationBadge.classList.toggle("hidden", unreadCount === 0);
+    dom.notificationBadge.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+    dom.notificationButton.setAttribute(
+      "aria-label",
+      unreadCount
+        ? `Open notifications, ${unreadCount} unread`
+        : "Open notifications",
+    );
+  }
+
+  async function refreshNotificationData() {
+    if (!state.client || !state.user || state.notificationRefreshing) return;
+    state.notificationRefreshing = true;
+
+    const [notificationsResult, preferencesResult, subscriptionsResult] = await Promise.all([
+      state.client.rpc("list_my_notifications", { p_limit: 50 }),
+      state.client.rpc("get_my_notification_preferences"),
+      state.client.rpc("list_my_push_subscriptions"),
+    ]);
+
+    state.notificationRefreshing = false;
+    const firstError = [
+      notificationsResult.error,
+      preferencesResult.error,
+      subscriptionsResult.error,
+    ].find(Boolean);
+
+    if (firstError) {
+      state.notificationAvailable = false;
+      state.notifications = [];
+      state.pushSubscriptions = [];
+      updateHeader();
+      return;
+    }
+
+    state.notificationAvailable = true;
+    state.notifications = notificationsResult.data || [];
+    state.notificationPreferences = preferencesResult.data?.[0] || {
+      new_market_push: false,
+      closing_soon_push: false,
+      resolution_push: false,
+      active_subscription_count: 0,
+    };
+    state.pushSubscriptions = subscriptionsResult.data || [];
+    updateHeader();
+  }
+
+  function hasConfiguredVapidKey() {
+    return Boolean(
+      typeof config.vapidPublicKey === "string" &&
+      config.vapidPublicKey.length > 40 &&
+      !config.vapidPublicKey.includes("YOUR-PUBLIC-VAPID-KEY")
+    );
+  }
+
+  function isIosDevice() {
+    return /iPad|iPhone|iPod/.test(window.navigator?.userAgent || "");
+  }
+
+  function isStandaloneApp() {
+    return Boolean(
+      window.navigator?.standalone ||
+      window.matchMedia?.("(display-mode: standalone)")?.matches
+    );
+  }
+
+  function getPushCapability() {
+    const browserNavigator = window.navigator || {};
+    if (
+      !("serviceWorker" in browserNavigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      return {
+        available: false,
+        message: "This browser does not support background push notifications.",
+      };
+    }
+
+    if (isIosDevice() && !isStandaloneApp()) {
+      return {
+        available: false,
+        message: "On iPhone or iPad, add The Friend Exchange to your Home Screen before enabling push.",
+      };
+    }
+
+    if (!hasConfiguredVapidKey()) {
+      return {
+        available: false,
+        message: "Push delivery has not been configured by the administrator yet.",
+      };
+    }
+
+    if (window.Notification.permission === "denied") {
+      return {
+        available: false,
+        message: "Notifications are blocked in this browser’s settings.",
+      };
+    }
+
+    return {
+      available: true,
+      message: "This device can receive Friend Exchange push notifications.",
+    };
+  }
+
+  async function preparePushServiceWorker() {
+    if (!("serviceWorker" in (window.navigator || {}))) return null;
+
+    try {
+      state.serviceWorkerRegistration = await window.navigator.serviceWorker.register(
+        "service-worker.js",
+        { scope: "./" },
+      );
+      return state.serviceWorkerRegistration;
+    } catch {
+      state.serviceWorkerRegistration = null;
+      return null;
+    }
+  }
+
+  async function getCurrentPushSubscription() {
+    const registration = state.serviceWorkerRegistration || await preparePushServiceWorker();
+    if (!registration?.pushManager) return null;
+    return registration.pushManager.getSubscription();
+  }
+
+  function urlBase64ToUint8Array(value) {
+    const padding = "=".repeat((4 - (value.length % 4)) % 4);
+    const base64 = (value + padding).replaceAll("-", "+").replaceAll("_", "/");
+    const raw = window.atob(base64);
+    return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+  }
+
+  function getDefaultDeviceLabel() {
+    const userAgent = window.navigator?.userAgent || "";
+    if (/iPhone/.test(userAgent)) return "iPhone";
+    if (/iPad/.test(userAgent)) return "iPad";
+    if (/Android/.test(userAgent)) return "Android phone";
+    if (/Mac/.test(userAgent)) return "Mac";
+    if (/Windows/.test(userAgent)) return "Windows PC";
+    return "Browser device";
+  }
+
+  async function registerCurrentPushSubscription(deviceLabel) {
+    const capability = getPushCapability();
+    if (!capability.available) throw new Error(capability.message);
+
+    const permission = await window.Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error("Notification permission was not granted.");
+    }
+
+    const registration = state.serviceWorkerRegistration || await preparePushServiceWorker();
+    if (!registration) throw new Error("The notification service could not start on this device.");
+
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config.vapidPublicKey),
+      });
+    }
+
+    const serialized = subscription.toJSON();
+    const { error } = await state.client.rpc("register_push_subscription", {
+      p_endpoint: subscription.endpoint,
+      p_p256dh: serialized.keys?.p256dh || "",
+      p_auth: serialized.keys?.auth || "",
+      p_device_label: String(deviceLabel || getDefaultDeviceLabel()).trim(),
+      p_user_agent: window.navigator?.userAgent || null,
+    });
+
+    if (error) throw error;
+    await refreshNotificationData();
+    return subscription;
+  }
+
+  async function unregisterCurrentPushSubscription() {
+    const subscription = await getCurrentPushSubscription();
+    if (!subscription) return false;
+
+    const { error } = await state.client.rpc("unregister_push_subscription", {
+      p_endpoint: subscription.endpoint,
+    });
+    if (error) throw error;
+
+    await subscription.unsubscribe();
+    await refreshNotificationData();
+    return true;
+  }
+
+  async function detachPushSubscriptionForSignOut() {
+    try {
+      const subscription = await getCurrentPushSubscription();
+      if (!subscription) return;
+      await state.client.rpc("unregister_push_subscription", {
+        p_endpoint: subscription.endpoint,
+      });
+      await subscription.unsubscribe();
+    } catch (error) {
+      console.warn("Could not detach this device from push before sign-out.", error);
+    }
+  }
+
+  function notificationIcon(kind) {
+    const icons = {
+      new_market: "fa-chart-line",
+      closing_soon: "fa-clock",
+      resolution: "fa-check",
+      void: "fa-ban",
+    };
+    return icons[kind] || "fa-bell";
+  }
+
+  function buildNotificationCenterMarkup(currentSubscription) {
+    const capability = getPushCapability();
+    const preferences = state.notificationPreferences;
+    const unreadCount = state.notifications.filter((notification) => !notification.read_at).length;
+    const pushActive = Boolean(currentSubscription);
+    const currentDevice = state.pushSubscriptions.find(
+      (subscription) => subscription.endpoint === currentSubscription?.endpoint,
+    );
+    const notificationRows = state.notifications.map((notification) => `
+      <a
+        class="notification-item${notification.read_at ? "" : " is-unread"}"
+        href="${escapeAttribute(notification.target_url)}"
+        data-notification-id="${notification.id}"
+      >
+        <span class="notification-item-icon" aria-hidden="true">
+          <i class="fa-solid ${notificationIcon(notification.kind)}"></i>
+        </span>
+        <span class="notification-item-copy">
+          <span class="notification-item-heading">
+            <strong>${escapeHtml(notification.title)}</strong>
+            ${notification.is_test ? '<span class="tiny-pill">Test</span>' : ""}
+          </span>
+          <span>${escapeHtml(notification.body)}</span>
+          <small>${escapeHtml(formatRelativeDate(notification.created_at))}</small>
+        </span>
+      </a>
+    `).join("");
+
+    return `
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Notification desk</p>
+          <h2>Exchange filings.</h2>
+          <p>${unreadCount
+            ? `${formatNumber(unreadCount)} unread ${pluralize(unreadCount, "notice")}.`
+            : "No unread notices."}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body notification-modal-body">
+        <div class="notification-list-heading">
+          <strong>In-app notices</strong>
+          ${unreadCount
+            ? '<button class="text-button" id="mark-all-notifications-read" type="button">Mark all read</button>'
+            : ""}
+        </div>
+        <div class="notification-list">
+          ${notificationRows || `
+            <div class="notification-empty">
+              <i class="fa-regular fa-bell" aria-hidden="true"></i>
+              <p>Nothing has been filed yet.</p>
+            </div>
+          `}
+        </div>
+
+        <form id="notification-preferences-form" class="notification-settings">
+          <div class="notification-settings-heading">
+            <div>
+              <strong>Push preferences</strong>
+              <p>In-app notices remain complete. Choose which events may interrupt this device.</p>
+            </div>
+            <span class="status-pill ${pushActive ? "status-resolved" : "status-closed"}">
+              ${pushActive ? "Device enabled" : "Device disabled"}
+            </span>
+          </div>
+
+          <div class="push-capability-note${capability.available ? "" : " is-warning"}">
+            ${escapeHtml(pushActive
+              ? "This browser is enrolled for push delivery."
+              : capability.message)}
+          </div>
+
+          <div class="form-field">
+            <label for="notification-device-label">This device’s name</label>
+            <input
+              id="notification-device-label"
+              name="deviceLabel"
+              maxlength="80"
+              value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
+              ${capability.available ? "" : "disabled"}
+            />
+          </div>
+
+          <div class="notification-preference-grid">
+            <label class="notification-preference">
+              <input type="checkbox" name="newMarket" ${preferences.new_market_push ? "checked" : ""} />
+              <span><strong>New markets</strong><small>When a new market is listed.</small></span>
+            </label>
+            <label class="notification-preference">
+              <input type="checkbox" name="closingSoon" ${preferences.closing_soon_push ? "checked" : ""} />
+              <span><strong>Closing soon</strong><small>One reminder before scheduled predictions close.</small></span>
+            </label>
+            <label class="notification-preference">
+              <input type="checkbox" name="resolution" ${preferences.resolution_push ? "checked" : ""} />
+              <span><strong>Resolutions</strong><small>When a market resolves or is voided.</small></span>
+            </label>
+          </div>
+
+          <div class="notification-settings-actions">
+            <button class="button button-secondary" id="toggle-push-device" type="button" ${
+              pushActive || capability.available ? "" : "disabled"
+            }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
+            <button class="button button-primary" type="submit">Save preferences</button>
+          </div>
+          <p class="fine-print notification-privacy-note">
+            Push messages may appear on your lock screen. They do not include balances or personalized payouts.
+          </p>
+        </form>
+      </div>
+    `;
+  }
+
+  async function openNotificationCenter() {
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Notification desk</p>
+          <h2>Retrieving filings…</h2>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body"><div class="skeleton" style="height:240px"></div></div>
+    `, "notification-modal");
+
+    await refreshNotificationData();
+    const currentSubscription = await getCurrentPushSubscription();
+    if (!dom.modalRoot.firstElementChild) return;
+    dom.modalRoot.querySelector(".modal").innerHTML = buildNotificationCenterMarkup(currentSubscription);
+
+    document.querySelectorAll("[data-notification-id]").forEach((link) => {
+      link.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const targetUrl = event.currentTarget.getAttribute("href") || "#/markets";
+        const notificationId = Number(event.currentTarget.dataset.notificationId);
+        const { error } = await state.client.rpc("mark_notification_read", {
+          p_notification_id: notificationId,
+        });
+        if (error) showToast(error.message, "error");
+        await refreshNotificationData();
+        closeModal();
+        window.location.hash = targetUrl;
+      });
+    });
+
+    document.querySelector("#mark-all-notifications-read")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, "Marking…");
+      const { error } = await state.client.rpc("mark_all_notifications_read");
+      setButtonLoading(button, false);
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+      await refreshNotificationData();
+      await openNotificationCenter();
+    });
+
+    document.querySelector("#toggle-push-device")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const deviceLabel = document.querySelector("#notification-device-label")?.value;
+      setButtonLoading(button, true, currentSubscription ? "Disabling…" : "Enabling…");
+      try {
+        if (currentSubscription) {
+          await unregisterCurrentPushSubscription();
+          showToast("Push notifications disabled on this device.", "success");
+        } else {
+          await registerCurrentPushSubscription(deviceLabel);
+          showToast("This device is ready for push notifications.", "success");
+        }
+        await openNotificationCenter();
+      } catch (error) {
+        setButtonLoading(button, false);
+        showToast(error.message || "Push notifications could not be updated.", "error");
+      }
+    });
+
+    document.querySelector("#notification-preferences-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const button = event.currentTarget.querySelector("button[type='submit']");
+      setButtonLoading(button, true, "Saving…");
+      const { error } = await state.client.rpc("update_my_notification_preferences", {
+        p_new_market_push: form.get("newMarket") === "on",
+        p_closing_soon_push: form.get("closingSoon") === "on",
+        p_resolution_push: form.get("resolution") === "on",
+      });
+      setButtonLoading(button, false);
+
+      if (error) {
+        showToast(error.message, "error");
+        return;
+      }
+
+      if (currentSubscription) {
+        const deviceLabel = document.querySelector("#notification-device-label")?.value;
+        try {
+          await registerCurrentPushSubscription(deviceLabel);
+        } catch (subscriptionError) {
+          showToast(subscriptionError.message || "The device name could not be updated.", "error");
+        }
+      }
+
+      await refreshNotificationData();
+      showToast("Notification preferences updated.", "success");
+      await openNotificationCenter();
+    });
   }
 
   function setupAllowanceNoticeChannel() {
@@ -4318,7 +4790,12 @@
       </div>
     `;
 
-    const { data, error } = await state.client.rpc("list_approved_signup_emails");
+    const [invitationResult, notificationResult, currentPushSubscription] = await Promise.all([
+      state.client.rpc("list_approved_signup_emails"),
+      state.client.rpc("get_notification_admin_overview", { p_limit: 30 }),
+      getCurrentPushSubscription(),
+    ]);
+    const { data, error } = invitationResult;
 
     if (getRoute().page !== "admin") return;
 
@@ -4335,12 +4812,282 @@
       return;
     }
 
-    dom.main.innerHTML = buildAdminInvitationMarkup(data || []);
+    state.notificationAdminOverview = notificationResult.data || null;
+    state.currentPushSubscriptionActive = Boolean(currentPushSubscription);
+    dom.main.innerHTML = buildAdminInvitationMarkup(
+      data || [],
+      notificationResult.data || null,
+      notificationResult.error || null,
+    );
     bindAdminInvitationEvents(data || []);
+    bindAdminNotificationLabEvents();
     setupScrollableTableFades();
   }
 
-  function buildAdminInvitationMarkup(invitations) {
+  function getNotificationTemplate(kind = "new_market", market = null) {
+    const question = market?.question || "Will the committee reach an unnecessarily confident conclusion?";
+    const creator = market?.creator?.display_name || state.profile?.display_name || "Administrator";
+    const winner = market?.winner?.label || market?.outcomes?.[0]?.label || "Yes";
+    const duration = market?.closes_at && market?.created_at
+      ? new Date(market.closes_at).getTime() - new Date(market.created_at).getTime()
+      : 24 * 60 * 60 * 1000;
+    const closingLabel = duration >= 24 * 60 * 60 * 1000 ? "24 hours" : "1 hour";
+    const templates = {
+      new_market: {
+        title: "New market listed",
+        body: `${question} — opened by ${creator}.`,
+      },
+      closing_soon: {
+        title: "Predictions close soon",
+        body: `${question} — closes in ${closingLabel}.`,
+      },
+      resolution: {
+        title: "Market resolved",
+        body: `${question} — winner: ${winner}.`,
+      },
+      void: {
+        title: "Market voided",
+        body: `${question} — committed points have been returned.`,
+      },
+    };
+
+    return {
+      ...(templates[kind] || templates.new_market),
+      targetUrl: market ? `#/market/${market.id}` : "#/markets",
+    };
+  }
+
+  function notificationDeliveryStatus(status) {
+    const labels = {
+      pending: "Pending",
+      processing: "Processing",
+      sent: "Sent",
+      failed: "Failed",
+      expired: "Expired",
+      suppressed: "Suppressed",
+    };
+    return labels[status] || status;
+  }
+
+  function buildAdminNotificationLabMarkup(overview, notificationError = null) {
+    if (notificationError || !overview) {
+      return `
+        <section class="panel notification-lab-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Notification Lab</p>
+              <h2>Delivery controls unavailable.</h2>
+              <p>${escapeHtml(notificationError?.message || "Install the notification migration to activate the lab.")}</p>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    const markets = getAllMarkets();
+    const selectedMarket = markets[0] || null;
+    const template = getNotificationTemplate("new_market", selectedMarket);
+    const mode = overview.mode || "off";
+    const modeLabel = mode === "off" ? "Off" : mode === "test" ? "Test" : "Live";
+    const modeTone = mode === "live" ? "status-resolved" : mode === "test" ? "status-closed" : "status-void";
+    const browserPermission = "Notification" in window
+      ? window.Notification.permission
+      : "unsupported";
+    const workerStatus = state.serviceWorkerRegistration?.active
+      ? "Active"
+      : state.serviceWorkerRegistration
+        ? "Installing"
+        : "Unavailable";
+    const installationStatus = isIosDevice()
+      ? isStandaloneApp() ? "Home Screen app" : "Home Screen required"
+      : "Browser supported";
+    const lastSuccessfulDelivery = overview.last_successful_delivery_at
+      ? formatRelativeDate(overview.last_successful_delivery_at)
+      : "None yet";
+    const recentNotifications = (overview.notifications || []).map((notification) => `
+      <tr>
+        <td>
+          <div class="notification-history-title">
+            <strong>${escapeHtml(notification.title)}</strong>
+            ${notification.is_test ? '<span class="tiny-pill">Test</span>' : ""}
+          </div>
+          <span class="muted">${escapeHtml(notification.body)}</span>
+        </td>
+        <td>${escapeHtml(NOTIFICATION_KIND_LABELS[notification.kind] || notification.kind)}</td>
+        <td><span class="status-pill status-${escapeAttribute(notification.delivery_mode === "live" ? "resolved" : "closed")}">${escapeHtml(notification.delivery_mode)}</span></td>
+        <td class="mono">${formatNumber(notification.actual_recipient_count)} / ${formatNumber(notification.intended_recipient_count)}</td>
+        <td class="mono">${formatNumber(notification.sent_count)} sent${notification.failed_count ? ` · ${formatNumber(notification.failed_count)} failed` : ""}</td>
+        <td class="mono">${escapeHtml(formatDateTime(notification.created_at))}</td>
+      </tr>
+    `).join("");
+    const recentDeliveries = (overview.deliveries || []).map((delivery) => `
+      <tr>
+        <td>#${delivery.id}</td>
+        <td>${escapeHtml(delivery.display_name || "Unknown trader")}</td>
+        <td>${escapeHtml(delivery.device_label || "Removed device")}</td>
+        <td><span class="status-pill status-${delivery.status === "sent" ? "resolved" : delivery.status === "failed" || delivery.status === "expired" ? "void" : "closed"}">${escapeHtml(notificationDeliveryStatus(delivery.status))}</span></td>
+        <td class="mono">${formatNumber(delivery.attempt_count)}</td>
+        <td>${delivery.last_error ? escapeHtml(delivery.last_error) : '<span class="muted">—</span>'}</td>
+      </tr>
+    `).join("");
+    const deviceOptions = state.pushSubscriptions.map((subscription) => `
+      <label class="notification-device-option">
+        <input type="checkbox" name="subscriptionId" value="${escapeAttribute(subscription.id)}" checked />
+        <span>
+          <strong>${escapeHtml(subscription.device_label)}</strong>
+          <small>Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}</small>
+        </span>
+      </label>
+    `).join("");
+
+    return `
+      <section class="panel notification-lab-panel">
+        <div class="panel-heading notification-lab-heading">
+          <div>
+            <p class="eyebrow">Notification Lab</p>
+            <h2>Fine-tune delivery before the bell rings.</h2>
+            <p>Tests are enforced as administrator-to-self. Production wording remains fixed.</p>
+          </div>
+          <span class="status-pill ${modeTone}">${modeLabel}</span>
+        </div>
+
+        <div class="notification-lab-stats">
+          <div><span>Active devices</span><strong>${formatNumber(overview.active_subscriptions)}</strong></div>
+          <div><span>Pending deliveries</span><strong>${formatNumber(overview.pending_deliveries)}</strong></div>
+          <div><span>Failed or expired</span><strong>${formatNumber(overview.failed_deliveries)}</strong></div>
+        </div>
+
+        <form id="notification-mode-form" class="notification-mode-form">
+          <div class="form-field">
+            <label for="notification-delivery-mode">Global delivery mode</label>
+            <select id="notification-delivery-mode" name="deliveryMode">
+              <option value="off"${mode === "off" ? " selected" : ""}>Off — create nothing</option>
+              <option value="test"${mode === "test" ? " selected" : ""}>Test — administrators only</option>
+              <option value="live"${mode === "live" ? " selected" : ""}>Live — opted-in members</option>
+            </select>
+          </div>
+          <button class="button button-secondary" type="submit">Update mode</button>
+        </form>
+
+        <div class="notification-diagnostic-grid" aria-label="Current browser push diagnostics">
+          <div>
+            <span>Public push key</span>
+            <strong>${hasConfiguredVapidKey() ? "Configured" : "Needs setup"}</strong>
+          </div>
+          <div>
+            <span>Service worker</span>
+            <strong>${escapeHtml(workerStatus)}</strong>
+          </div>
+          <div>
+            <span>Browser permission</span>
+            <strong>${escapeHtml(browserPermission)}</strong>
+          </div>
+          <div>
+            <span>Current browser</span>
+            <strong>${state.currentPushSubscriptionActive ? "Enrolled" : "Not enrolled"}</strong>
+          </div>
+          <div>
+            <span>Installation</span>
+            <strong>${escapeHtml(installationStatus)}</strong>
+          </div>
+          <div>
+            <span>Last accepted push</span>
+            <strong>${escapeHtml(lastSuccessfulDelivery)}</strong>
+          </div>
+        </div>
+
+        <div class="notification-lab-grid">
+          <form id="notification-test-form" class="notification-test-form">
+            <div class="form-grid two-column">
+              <div class="form-field">
+                <label for="notification-test-kind">Notification type</label>
+                <select id="notification-test-kind" name="kind">
+                  <option value="new_market">New market</option>
+                  <option value="closing_soon">Closing soon</option>
+                  <option value="resolution">Resolution</option>
+                  <option value="void">Voided market</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="notification-test-market">Preview market</label>
+                <select id="notification-test-market" name="marketId">
+                  <option value="">Fictional sample</option>
+                  ${markets.map((market) => `
+                    <option value="${market.id}"${market.id === selectedMarket?.id ? " selected" : ""}>${escapeHtml(market.question)}</option>
+                  `).join("")}
+                </select>
+              </div>
+            </div>
+            <div class="form-field">
+              <label for="notification-test-title">Title</label>
+              <input id="notification-test-title" name="title" maxlength="82" value="${escapeAttribute(template.title)}" required />
+            </div>
+            <div class="form-field">
+              <label for="notification-test-body">Message</label>
+              <textarea id="notification-test-body" name="body" maxlength="300" required>${escapeHtml(template.body)}</textarea>
+            </div>
+            <input id="notification-test-target" name="targetUrl" type="hidden" value="${escapeAttribute(template.targetUrl)}" />
+            <fieldset class="notification-device-field">
+              <legend>Your delivery devices</legend>
+              ${deviceOptions || '<p class="push-capability-note is-warning">Enable push from the notification bell on one of your devices. The test will still appear in your in-app inbox.</p>'}
+            </fieldset>
+            <button class="button button-primary" type="submit">Send test to me</button>
+          </form>
+
+          <div class="notification-preview-panel">
+            <p class="eyebrow">Lock-screen preview</p>
+            <div class="notification-preview">
+              <div class="notification-preview-app">
+                <img src="img/icon-192.png" alt="" />
+                <span>The Friend Exchange</span>
+                <small>now</small>
+              </div>
+              <strong id="notification-preview-title">[TEST] ${escapeHtml(template.title)}</strong>
+              <p id="notification-preview-body">${escapeHtml(template.body)}</p>
+            </div>
+            <p class="fine-print">Operating systems may truncate long questions. Tapping opens the selected market.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="table-card notification-history-card">
+        <div class="admin-table-heading">
+          <div>
+            <h2>Recent notification records</h2>
+            <p>Shadow-mode records show the audience that would have been eligible in Live mode.</p>
+          </div>
+          <span class="tiny-pill">${formatNumber((overview.notifications || []).length)} records</span>
+        </div>
+        ${recentNotifications ? `
+          <div data-scrollable-table><div class="table-scroll">
+            <table class="data-table notification-history-table">
+              <thead><tr><th>Notice</th><th>Type</th><th>Mode</th><th>Recipients</th><th>Push</th><th>Created</th></tr></thead>
+              <tbody>${recentNotifications}</tbody>
+            </table>
+          </div></div>
+        ` : '<div class="notification-empty"><p>No notification records yet.</p></div>'}
+      </section>
+
+      <section class="table-card notification-delivery-card">
+        <div class="admin-table-heading">
+          <div>
+            <h2>Recent delivery attempts</h2>
+            <p>An accepted push confirms the browser service received it, not that the recipient opened it.</p>
+          </div>
+        </div>
+        ${recentDeliveries ? `
+          <div data-scrollable-table><div class="table-scroll">
+            <table class="data-table notification-delivery-table">
+              <thead><tr><th>ID</th><th>Trader</th><th>Device</th><th>Status</th><th>Attempts</th><th>Detail</th></tr></thead>
+              <tbody>${recentDeliveries}</tbody>
+            </table>
+          </div></div>
+        ` : '<div class="notification-empty"><p>No push deliveries have been attempted yet.</p></div>'}
+      </section>
+    `;
+  }
+
+  function buildAdminInvitationMarkup(invitations, notificationOverview = null, notificationError = null) {
     const joinedCount = invitations.filter(
       (invitation) => invitation.registered_user_id && invitation.confirmed_at
     ).length;
@@ -4397,6 +5144,10 @@
           <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
         </div>
       </div>
+
+      ${notificationOverview || notificationError
+        ? buildAdminNotificationLabMarkup(notificationOverview, notificationError)
+        : ""}
 
       <div class="portfolio-grid admin-stats" aria-label="Invitation status">
         <div class="portfolio-stat">
@@ -4504,6 +5255,130 @@
       button.addEventListener("click", () => {
         openRemoveInvitationModal(button.dataset.removeInvitation);
       });
+    });
+  }
+
+  async function applyNotificationMode(mode, button = null) {
+    setButtonLoading(button, true, "Updating…");
+    const { error } = await state.client.rpc("admin_set_notification_mode", {
+      p_delivery_mode: mode,
+    });
+    setButtonLoading(button, false);
+
+    if (error) {
+      showToast(error.message, "error");
+      return;
+    }
+
+    closeModal();
+    await renderAdmin();
+    showToast(`Notification delivery is now ${mode}.`, "success");
+  }
+
+  function confirmLiveNotificationMode(button) {
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Enable live delivery</p>
+          <h2>Open the notification desk?</h2>
+          <p>Future events will be filed in-app and pushed to opted-in member devices.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="trade-warning">Test and shadow records will not be sent retroactively.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Keep current mode</button>
+        <button class="button button-primary" id="confirm-live-notifications" type="button">Enable Live mode</button>
+      </div>
+    `);
+
+    document.querySelector("#confirm-live-notifications")?.addEventListener("click", (event) => {
+      void applyNotificationMode("live", event.currentTarget || button);
+    });
+  }
+
+  function bindAdminNotificationLabEvents() {
+    const overview = state.notificationAdminOverview;
+    if (!overview) return;
+
+    document.querySelector("#notification-mode-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const mode = String(new FormData(event.currentTarget).get("deliveryMode") || "off");
+      const button = event.currentTarget.querySelector("button[type='submit']");
+      if (mode === "live" && overview.mode !== "live") {
+        confirmLiveNotificationMode(button);
+        return;
+      }
+      await applyNotificationMode(mode, button);
+    });
+
+    const testForm = document.querySelector("#notification-test-form");
+    const kindInput = document.querySelector("#notification-test-kind");
+    const marketInput = document.querySelector("#notification-test-market");
+    const titleInput = document.querySelector("#notification-test-title");
+    const bodyInput = document.querySelector("#notification-test-body");
+    const targetInput = document.querySelector("#notification-test-target");
+    const previewTitle = document.querySelector("#notification-preview-title");
+    const previewBody = document.querySelector("#notification-preview-body");
+
+    const updatePreview = ({ resetCopy = false } = {}) => {
+      const market = getAllMarkets().find((item) => String(item.id) === marketInput?.value) || null;
+      const template = getNotificationTemplate(kindInput?.value || "new_market", market);
+      if (resetCopy) {
+        titleInput.value = template.title;
+        bodyInput.value = template.body;
+        targetInput.value = template.targetUrl;
+      }
+      previewTitle.textContent = `[TEST] ${titleInput.value}`;
+      previewBody.textContent = bodyInput.value;
+    };
+
+    kindInput?.addEventListener("change", () => updatePreview({ resetCopy: true }));
+    marketInput?.addEventListener("change", () => updatePreview({ resetCopy: true }));
+    titleInput?.addEventListener("input", () => updatePreview());
+    bodyInput?.addEventListener("input", () => updatePreview());
+
+    testForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const submit = event.currentTarget.querySelector("button[type='submit']");
+      const subscriptionIds = form.getAll("subscriptionId").map(String);
+      setButtonLoading(submit, true, "Filing test…");
+
+      const { data, error } = await state.client.rpc("admin_send_notification_test", {
+        p_kind: String(form.get("kind") || "new_market"),
+        p_title: String(form.get("title") || "").trim(),
+        p_body: String(form.get("body") || "").trim(),
+        p_target_url: String(form.get("targetUrl") || "#/markets"),
+        p_subscription_ids: subscriptionIds,
+      });
+
+      if (error) {
+        setButtonLoading(submit, false);
+        showToast(error.message, "error");
+        return;
+      }
+
+      const deliveryIds = Array.isArray(data?.delivery_ids) ? data.delivery_ids : [];
+      const results = await Promise.all(deliveryIds.map((deliveryId) =>
+        state.client.functions.invoke("notification-delivery", {
+          body: { delivery_id: deliveryId },
+        })
+      ));
+      const failures = results.filter((result) => result.error).length;
+      setButtonLoading(submit, false);
+      await refreshNotificationData();
+      await renderAdmin();
+
+      if (!deliveryIds.length) {
+        showToast("Test filed in-app. Enable a push device to test lock-screen delivery.", "success");
+      } else if (failures) {
+        showToast("Test filed, but one or more push attempts failed. Review the delivery table.", "error");
+      } else {
+        showToast("Test filed and dispatched to your selected devices.", "success");
+      }
     });
   }
 
@@ -5405,6 +6280,7 @@
     document.querySelector("#account-sign-out").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       setButtonLoading(button, true, "Signing out…");
+      await detachPushSubscriptionForSignOut();
       const { error } = await state.client.auth.signOut();
       setButtonLoading(button, false);
 
