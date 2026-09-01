@@ -4927,7 +4927,9 @@
         <td>${escapeHtml(delivery.device_label || "Removed device")}</td>
         <td><span class="status-pill status-${delivery.status === "sent" ? "resolved" : delivery.status === "failed" || delivery.status === "expired" ? "void" : "closed"}">${escapeHtml(notificationDeliveryStatus(delivery.status))}</span></td>
         <td class="mono">${formatNumber(delivery.attempt_count)}</td>
-        <td>${delivery.last_error ? escapeHtml(delivery.last_error) : '<span class="muted">—</span>'}</td>
+        <td>${delivery.response_status
+          ? `<span class="mono">HTTP ${formatNumber(delivery.response_status)}</span>${delivery.last_error ? " · " : ""}`
+          : ""}${delivery.last_error ? escapeHtml(delivery.last_error) : delivery.response_status ? "" : '<span class="muted">—</span>'}</td>
       </tr>
     `).join("");
     const deviceOptions = state.pushSubscriptions.map((subscription) => `
