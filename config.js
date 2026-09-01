@@ -6,7 +6,7 @@
 window.FRIEND_EXCHANGE_CONFIG = {
   supabaseUrl: "https://eyqyuzinneodeelwsyyp.supabase.co",
   supabasePublishableKey: "sb_publishable_1T10hD9xjTPsSCMs24trOw_Z-6_m1Nz",
-  vapidPublicKey: "BAv5OVskbNETmtBIYVb8O8qLnKr3eiTSVRimb26rK13LT-YMk8zwNBd0BS6ncqklperfZs7KEghHndguIxCy1dU",
+  vapidPublicKey: "BCRH6Yl7z5eh-_Qc8BglGnS652zPFZ2ggyzN5CB30sdst5EEDLkOJCuNkPeP70yQ9ryyiXWRl4J6qKoma7C55hs",
   appName: "The Friend Exchange",
   tagline: "Markets of consequence. Sort of.",
 };
