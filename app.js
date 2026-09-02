@@ -43,6 +43,14 @@
   const PROFILE_ICON_NAMES = new Set(PROFILE_ICON_OPTIONS.map((icon) => icon.name));
   const MAX_MARKET_OUTCOMES = 6;
   const MARKET_ACTIVITY_LIMIT = 20;
+  const NOTIFICATION_HISTORY_PAGE_SIZE = 10;
+  const ADMIN_NOTIFICATION_OVERVIEW_LIMIT = 100;
+  const NOTIFICATION_HISTORY_FILTERS = Object.freeze([
+    { value: "all", label: "All" },
+    { value: "automatic", label: "Automatic" },
+    { value: "tests", label: "Tests" },
+    { value: "failed", label: "Failed" },
+  ]);
   const MARKET_ACTIVITY_VIEW_LABELS = Object.freeze({
     recent: "Recent",
     largest: "Largest commitments",
@@ -55,6 +63,29 @@
     resolution: "Resolution",
     void: "Voided market",
   });
+  const NOTIFICATION_MODE_OPTIONS = Object.freeze([
+    {
+      value: "off",
+      label: "Paused",
+      description: "No automatic notification records or pushes.",
+      icon: "pause",
+      className: "is-paused",
+    },
+    {
+      value: "test",
+      label: "Admins only",
+      description: "Record activity and send only to opted-in administrators.",
+      icon: "flask",
+      className: "is-admins",
+    },
+    {
+      value: "live",
+      label: "Live",
+      description: "Send alerts to every member who opted in.",
+      icon: "tower-broadcast",
+      className: "is-live",
+    },
+  ]);
   const ODDS_HISTORY_COLORS = Object.freeze([
     "#101b18",
     "#327ca5",
@@ -171,6 +202,9 @@
     currentPushSubscriptionActive: false,
     currentPushSubscriptionEndpoint: null,
     notificationAdminOverview: null,
+    notificationHistoryFilter: "all",
+    notificationLabOpen: false,
+    notificationTestResult: null,
   };
 
   document.querySelector("#join-app-name").textContent = config.appName || "The Friend Exchange";
@@ -539,6 +573,9 @@
     state.currentPushSubscriptionActive = false;
     state.currentPushSubscriptionEndpoint = null;
     state.notificationAdminOverview = null;
+    state.notificationHistoryFilter = "all";
+    state.notificationLabOpen = false;
+    state.notificationTestResult = null;
     closeModal({ acknowledgeAllowance: false });
   }
 
@@ -1070,6 +1107,10 @@
     state.currentPushSubscriptionEndpoint = currentSubscription?.endpoint || null;
     dom.main.innerHTML = buildSettingsMarkup(currentSubscription);
     bindSettingsEvents(currentSubscription);
+    const pushSettings = document.querySelector("#notification-preferences-form");
+    if (getRoute().id === "push" && typeof pushSettings?.scrollIntoView === "function") {
+      pushSettings.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function bindSettingsEvents(currentSubscription) {
@@ -4899,8 +4940,6 @@
     }
 
     const adminView = getAdminView();
-    const adminNotificationView = getAdminNotificationView();
-
     dom.main.innerHTML = `
       <div class="page-header">
         <div>
@@ -4917,14 +4956,12 @@
 
     const [invitationResult, notificationResult, currentPushSubscription] = await Promise.all([
       state.client.rpc("list_approved_signup_emails"),
-      state.client.rpc("get_notification_admin_overview", { p_limit: 30 }),
+      state.client.rpc("get_notification_admin_overview", {
+        p_limit: ADMIN_NOTIFICATION_OVERVIEW_LIMIT,
+      }),
       getCurrentPushSubscription(),
     ]);
-    if (
-      getRoute().page !== "admin" ||
-      getAdminView() !== adminView ||
-      getAdminNotificationView() !== adminNotificationView
-    ) return;
+    if (getRoute().page !== "admin" || getAdminView() !== adminView) return;
 
     state.notificationAdminOverview = notificationResult.data || null;
     state.currentPushSubscriptionActive = Boolean(currentPushSubscription);
@@ -4937,20 +4974,13 @@
       notificationResult.error || null,
     );
     bindAdminPageEvents(invitationResult.data || []);
-    if (adminView === "notifications") bindAdminNotificationLabEvents();
+    if (adminView === "notifications") bindAdminNotificationPageEvents();
     setupScrollableTableFades();
   }
 
   function getAdminView() {
     const view = getRoute().id;
     return view === "notifications" ? "notifications" : "people";
-  }
-
-  function getAdminNotificationView() {
-    const subpage = getRoute().subpage;
-    return subpage === "history" || subpage === "records" || subpage === "deliveries"
-      ? "history"
-      : "lab";
   }
 
   function getNotificationTemplate(kind = "new_market", market = null) {
@@ -5062,37 +5092,21 @@
   }
 
   function buildAdminPeopleMarkup(invitations, invitationError = null) {
-    const profiles = [...state.profiles].sort((a, b) =>
-      a.display_name.localeCompare(b.display_name),
-    );
-    const memberCards = profiles.map((profile) => `
-      <button
-        class="admin-member-card"
-        data-manage-member="${escapeAttribute(profile.id)}"
-        type="button"
-        aria-label="Manage ${escapeAttribute(profile.display_name)}"
-      >
-        ${renderProfileAvatar(profile)}
-        <span class="admin-member-identity">
-          <strong>${escapeHtml(profile.display_name)}</strong>
-          <small>${profile.created_at ? `Joined ${escapeHtml(formatDateTime(profile.created_at))}` : "Registered member"}</small>
-        </span>
-        ${profile.is_admin ? '<span class="tiny-pill admin-member-role">Admin</span>' : ""}
-        <span class="admin-member-balance"><strong>${formatNumber(profile.balance)}</strong><small>points</small></span>
-        <i class="fa-solid fa-chevron-right admin-member-chevron" aria-hidden="true"></i>
-      </button>
-    `).join("");
-
     return `
-      <section class="table-card admin-members-card">
-        <div class="admin-table-heading">
-          <div><h2>Members</h2></div>
-        </div>
-        <div class="admin-member-list">
-          ${memberCards || '<div class="notification-empty"><p>No registered members found.</p></div>'}
-        </div>
-      </section>
-
+      <div class="admin-people-actions" role="group" aria-label="People actions">
+        <button class="admin-people-action" data-admin-approve-email type="button">
+          <span class="admin-people-action-icon"><i class="fa-solid fa-envelope-circle-check" aria-hidden="true"></i></span>
+          <span><strong>Approve email</strong><small>Let someone join the exchange</small></span>
+        </button>
+        <button class="admin-people-action" data-admin-adjust-points type="button">
+          <span class="admin-people-action-icon"><i class="fa-solid fa-coins" aria-hidden="true"></i></span>
+          <span><strong>Adjust points</strong><small>Add or subtract a member's points</small></span>
+        </button>
+        <button class="admin-people-action" data-admin-edit-profile type="button">
+          <span class="admin-people-action-icon"><i class="fa-solid fa-user-pen" aria-hidden="true"></i></span>
+          <span><strong>Edit profile</strong><small>Change a member's name or icon</small></span>
+        </button>
+      </div>
       ${buildAdminInvitationRegistryMarkup(invitations, invitationError)}
     `;
   }
@@ -5112,29 +5126,64 @@
       `;
     }
 
-    const rows = invitations.map((invitation) => {
+    const sortedInvitations = [...invitations].sort((a, b) => {
+      const statusRank = (invitation) => {
+        if (invitation.registered_user_id && !invitation.confirmed_at) return 0;
+        if (!invitation.registered_user_id) return 1;
+        return 2;
+      };
+      const rankDifference = statusRank(a) - statusRank(b);
+      if (rankDifference) return rankDifference;
+      const aName = a.registered_display_name || a.email;
+      const bName = b.registered_display_name || b.email;
+      return aName.localeCompare(bName);
+    });
+    const rows = sortedInvitations.map((invitation) => {
       const isRegistered = Boolean(invitation.registered_user_id);
       const isConfirmed = Boolean(invitation.confirmed_at);
+      const profile = isRegistered
+        ? state.profiles.find((item) => item.id === invitation.registered_user_id)
+        : null;
       const status = isConfirmed
         ? { label: "Joined", className: "status-resolved" }
         : isRegistered
           ? { label: "Awaiting confirmation", className: "status-closed" }
           : { label: "Approved", className: "status-open" };
-      const addedBy = invitation.added_by_display_name
-        || (isRegistered ? "Existing account" : "Administrator");
-      const traderName = invitation.registered_display_name
-        ? `<span class="muted">${escapeHtml(invitation.registered_display_name)}</span>`
+      const traderDisplayName = profile?.display_name || invitation.registered_display_name;
+      const traderName = traderDisplayName
+        ? `<span class="admin-person-name"><span class="muted">${escapeHtml(traderDisplayName)}</span>${profile?.is_admin ? '<span class="tiny-pill admin-person-role">Admin</span>' : ""}</span>`
         : "";
+      const avatar = isConfirmed
+        ? renderProfileAvatar(profile || {
+          display_name: invitation.registered_display_name || invitation.email,
+        })
+        : isRegistered
+          ? '<span class="avatar admin-pending-avatar" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></span>'
+          : '<span class="avatar admin-approved-avatar" aria-hidden="true">@</span>';
+      const rowActions = isConfirmed
+        ? `
+          <button class="admin-row-action" data-adjust-member-points="${escapeAttribute(invitation.registered_user_id)}" type="button">Adjust points</button>
+          <button class="admin-row-action" data-edit-member-profile="${escapeAttribute(invitation.registered_user_id)}" type="button">Edit profile</button>
+        `
+        : isRegistered
+          ? `<button class="admin-row-action" data-resend-confirmation="${escapeAttribute(invitation.email)}" type="button">Resend confirmation</button>`
+          : `<button class="admin-row-action is-danger" data-remove-invitation="${escapeAttribute(invitation.email)}" type="button">Remove approval</button>`;
 
       return `
         <tr>
+          <td class="admin-person-icon-cell">${avatar}</td>
           <td><div class="invitation-email"><strong>${escapeHtml(invitation.email)}</strong>${traderName}</div></td>
           <td><span class="status-pill ${status.className}">${status.label}</span></td>
-          <td>${escapeHtml(addedBy)}</td>
+          <td class="mono admin-person-points-cell">${isConfirmed && profile ? formatNumber(profile.balance) : "—"}</td>
           <td class="mono">${invitation.added_at ? escapeHtml(formatDateTime(invitation.added_at)) : "—"}</td>
-          <td>${isRegistered
-            ? '<span class="muted">Account retained</span>'
-            : `<button class="button button-ghost button-small" data-remove-invitation="${escapeAttribute(invitation.email)}" type="button">Remove</button>`}
+          <td class="mono">${isConfirmed ? escapeHtml(formatDateTime(invitation.confirmed_at)) : "—"}</td>
+          <td class="admin-person-actions-cell">
+            <details class="admin-overflow-menu admin-row-menu">
+              <summary class="icon-button" aria-label="Actions for ${escapeAttribute(invitation.registered_display_name || invitation.email)}">
+                <i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
+              </summary>
+              <div class="admin-overflow-menu-popover">${rowActions}</div>
+            </details>
           </td>
         </tr>
       `;
@@ -5142,17 +5191,11 @@
 
     return `
       <section class="table-card admin-invitation-card">
-        <div class="admin-table-heading">
-          <div>
-            <h2>Approved emails</h2>
-            <p>Registered accounts remain in the ledger and cannot be removed here.</p>
-          </div>
-          <button class="button button-primary button-small" data-admin-approve-email type="button">Approve email</button>
-        </div>
         ${invitations.length ? `
           <div data-scrollable-table><div class="table-scroll">
-            <table class="data-table invitation-table">
-              <thead><tr><th>Email</th><th>Status</th><th>Approved by</th><th>Approved on</th><th>Action</th></tr></thead>
+            <table class="data-table invitation-table admin-people-table">
+              <caption class="visually-hidden">People</caption>
+              <thead><tr><th><span class="visually-hidden">Icon</span></th><th>Email / name</th><th>Status</th><th class="admin-person-points-heading">Points</th><th>Approved on</th><th>Joined on</th><th>Action</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div></div>
@@ -5182,48 +5225,144 @@
     const lastSuccessfulDelivery = overview.last_successful_delivery_at
       ? formatRelativeDate(overview.last_successful_delivery_at)
       : "None yet";
+    const publicKeyConfigured = hasConfiguredVapidKey();
+    const fields = [
+      {
+        label: "Public push key",
+        value: publicKeyConfigured ? "Configured" : "Needs setup",
+        state: publicKeyConfigured ? "healthy" : "blocker",
+        detail: publicKeyConfigured
+          ? "The browser-safe delivery key is available."
+          : "Add the public push key to the site settings.",
+        problem: "The public push key needs to be configured.",
+      },
+      {
+        label: "Service worker",
+        value: workerStatus === "Installing" ? "Starting" : workerStatus,
+        state: workerStatus === "Active"
+          ? "healthy"
+          : workerStatus === "Installing" ? "optional" : "blocker",
+        detail: workerStatus === "Active"
+          ? "The notification service is running."
+          : workerStatus === "Installing"
+            ? "The notification service is still starting."
+            : "Reload the page. If this continues, the site setup needs to be checked.",
+        problem: "The notification service is unavailable on this browser.",
+      },
+      {
+        label: "Browser permission",
+        value: browserPermission === "granted"
+          ? "Granted"
+          : browserPermission === "denied"
+            ? "Blocked"
+            : browserPermission === "default" ? "Not requested" : "Unsupported",
+        state: browserPermission === "granted"
+          ? "healthy"
+          : browserPermission === "default" ? "optional" : "blocker",
+        detail: browserPermission === "granted"
+          ? "This browser allows notifications."
+          : browserPermission === "denied"
+            ? "Allow notifications in this browser or device's settings."
+            : browserPermission === "default"
+              ? "Permission will be requested when push is enabled."
+              : "This browser cannot display push notifications.",
+        problem: browserPermission === "denied"
+          ? "Notification permission is blocked in this browser."
+          : "This browser does not support notifications.",
+      },
+      {
+        label: "Current browser",
+        value: state.currentPushSubscriptionActive ? "Enrolled" : "Not enrolled",
+        state: state.currentPushSubscriptionActive ? "healthy" : "optional",
+        detail: state.currentPushSubscriptionActive
+          ? "This browser can receive selected push alerts."
+          : "Push has not been set up on this browser.",
+        action: state.currentPushSubscriptionActive ? null : "push-settings",
+      },
+      {
+        label: "Installation",
+        value: installationStatus,
+        state: installationStatus === "Home Screen required" ? "blocker" : "healthy",
+        detail: installationStatus === "Home Screen required"
+          ? "Open this site in Safari and add it to your Home Screen."
+          : installationStatus === "Home Screen app"
+            ? "The app is installed for push delivery."
+            : "This browser can support push delivery.",
+        problem: "Install the app on your Home Screen to enable push.",
+      },
+      {
+        label: "Last accepted push",
+        value: lastSuccessfulDelivery,
+        state: overview.last_successful_delivery_at ? "healthy" : "optional",
+        detail: overview.last_successful_delivery_at
+          ? "A push service has recently accepted a delivery."
+          : "No device has accepted a push yet.",
+      },
+    ];
+    const blockers = fields.filter((field) => field.state === "blocker");
+    const optionalSteps = fields.filter((field) => field.state === "optional");
 
     return {
-      needsAttention:
-        !hasConfiguredVapidKey() ||
-        workerStatus !== "Active" ||
-        browserPermission === "denied" ||
-        !state.currentPushSubscriptionActive ||
-        installationStatus === "Home Screen required",
-      fields: [
-        ["Public push key", hasConfiguredVapidKey() ? "Configured" : "Needs setup"],
-        ["Service worker", workerStatus],
-        ["Browser permission", browserPermission],
-        ["Current browser", state.currentPushSubscriptionActive ? "Enrolled" : "Not enrolled"],
-        ["Installation", installationStatus],
-        ["Last accepted push", lastSuccessfulDelivery],
-      ],
+      needsAttention: blockers.length > 0,
+      headline: blockers.length ? "Push setup needs attention" : "Push setup is ready",
+      summary: blockers.length
+        ? blockers[0].problem
+        : optionalSteps.length
+          ? "No blocking issues were found. Optional setup steps are highlighted below."
+          : "Everything needed for push delivery is working.",
+      fields,
     };
   }
 
   function buildAdminNotificationControlsMarkup(overview) {
     const mode = overview.mode || "off";
-    const modeLabel = mode === "off" ? "Off" : mode === "test" ? "Test" : "Live";
-    const modeTone = mode === "live" ? "status-resolved" : mode === "test" ? "status-closed" : "status-void";
+    const currentMode = NOTIFICATION_MODE_OPTIONS.find((option) => option.value === mode)
+      || NOTIFICATION_MODE_OPTIONS[0];
     const diagnostics = getAdminPushDiagnostics(overview);
+    const failedDeliveries = Number(overview.failed_deliveries) || 0;
 
     return `
-      <section class="panel notification-command-bar">
-        <div class="notification-command-mode">
-          <span>Delivery mode</span>
-          <span class="status-pill ${modeTone}">${modeLabel}</span>
+      <section class="panel notification-mode-card">
+        <div class="notification-mode-header">
+          <div>
+            <div class="notification-mode-title">
+              <h2>Automatic notifications</h2>
+              <span class="status-pill notification-mode-status ${currentMode.className}">${currentMode.label}</span>
+            </div>
+            <p>This controls automatic market alerts. Manual tests remain available below.</p>
+          </div>
         </div>
-        <div class="notification-command-summary">
-          <span>${formatNumber(overview.active_subscriptions)} active ${pluralize(overview.active_subscriptions, "device")}</span>
-          <span>${formatNumber(overview.pending_deliveries)} pending</span>
-          <span${Number(overview.failed_deliveries) ? ' class="has-failures"' : ""}>${formatNumber(overview.failed_deliveries)} failed or expired</span>
-        </div>
-        <div class="notification-command-actions">
-          <button class="button button-ghost button-small" data-open-notification-diagnostics type="button">
-            Diagnostics${diagnostics.needsAttention ? '<span class="admin-control-alert" aria-label="Needs attention">!</span>' : ""}
-          </button>
-          <button class="button button-secondary button-small" data-change-notification-mode type="button">Change mode</button>
-        </div>
+        <form class="notification-mode-form" id="notification-mode-form" data-current-mode="${escapeAttribute(mode)}">
+          <fieldset class="notification-mode-options">
+            <legend class="visually-hidden">Automatic notification mode</legend>
+            ${NOTIFICATION_MODE_OPTIONS.map((option) => `
+              <label class="notification-mode-option ${option.className}">
+                <input type="radio" name="deliveryMode" value="${option.value}"${option.value === mode ? " checked" : ""} />
+                <span class="notification-mode-option-icon"><i class="fa-solid fa-${option.icon}" aria-hidden="true"></i></span>
+                <span><strong>${option.label}</strong><small>${option.description}</small></span>
+              </label>
+            `).join("")}
+          </fieldset>
+          <div class="notification-mode-footer">
+            <div class="notification-mode-health" aria-label="Notification delivery health">
+              <div><strong>${formatNumber(overview.active_subscriptions)}</strong><span>Active ${pluralize(overview.active_subscriptions, "device")}</span></div>
+              <div><strong>${formatNumber(overview.pending_deliveries)}</strong><span>Waiting</span></div>
+              ${failedDeliveries ? `
+                <button class="notification-mode-health-item has-failures" data-show-failed-notifications type="button" aria-label="Show ${formatNumber(failedDeliveries)} failed or expired deliveries in notification history">
+                  <strong>${formatNumber(failedDeliveries)}</strong><span>Failed / expired</span>
+                </button>
+              ` : '<div><strong>0</strong><span>Failed / expired</span></div>'}
+            </div>
+            <div class="notification-mode-footer-actions">
+              <button class="notification-push-setup" data-open-notification-diagnostics type="button">
+                <span>Push setup</span>
+                <span class="notification-push-setup-status ${diagnostics.needsAttention ? "is-attention" : "is-ready"}">${diagnostics.needsAttention ? "Needs attention" : "Ready"}</span>
+                <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+              </button>
+              <button class="button button-primary notification-mode-apply hidden" type="submit">Apply mode</button>
+            </div>
+          </div>
+        </form>
       </section>
     `;
   }
@@ -5238,6 +5377,30 @@
           </div>
         </div>
       </section>
+    `;
+  }
+
+  function buildNotificationTestResultMarkup(result = state.notificationTestResult) {
+    if (!result) {
+      return '<div class="notification-test-result hidden" id="notification-test-result" aria-live="polite"></div>';
+    }
+
+    const tone = ["success", "pending", "error"].includes(result.tone)
+      ? result.tone
+      : "pending";
+    const icon = tone === "success"
+      ? "circle-check"
+      : tone === "error" ? "circle-exclamation" : "clock";
+
+    return `
+      <div class="notification-test-result is-${tone}" id="notification-test-result" aria-live="polite">
+        <span class="notification-test-result-icon" aria-hidden="true"><i class="fa-solid fa-${icon}"></i></span>
+        <div>
+          <strong>${escapeHtml(result.title)}</strong>
+          <p>${escapeHtml(result.detail)}</p>
+        </div>
+        ${result.notificationId ? `<button class="button button-secondary button-small" data-view-notification-deliveries="${escapeAttribute(result.notificationId)}" type="button">View details</button>` : ""}
+      </div>
     `;
   }
 
@@ -5264,66 +5427,70 @@
         </div>
       `;
     }).join("");
+    const isOpen = Boolean(state.notificationLabOpen);
 
     return `
-      ${buildAdminNotificationControlsMarkup(overview)}
-      <section class="panel notification-lab-panel">
-        <div class="panel-heading notification-lab-heading">
-          <div>
-            <h2>Test lab</h2>
-            <p>Tests are enforced as administrator-to-self. Production wording remains fixed.</p>
-          </div>
-        </div>
-        <div class="notification-lab-grid">
-          <form id="notification-test-form" class="notification-test-form">
-            <div class="form-grid two-column">
-              <div class="form-field">
-                <label for="notification-test-kind">Notification type</label>
-                <select id="notification-test-kind" name="kind">
-                  <option value="new_market">New market</option>
-                  <option value="closing_soon">Closing soon</option>
-                  <option value="resolution">Resolution</option>
-                  <option value="void">Voided market</option>
-                </select>
+      <section class="panel notification-lab-panel${isOpen ? " is-open" : ""}">
+        <button class="notification-lab-heading notification-lab-toggle" id="notification-lab-toggle" type="button" aria-expanded="${isOpen}" aria-controls="notification-lab-content">
+          <span class="notification-lab-heading-copy">
+            <span class="notification-lab-title" role="heading" aria-level="2">Test lab</span>
+            <span class="notification-lab-description">Tests are enforced as administrator-to-self. Production wording remains fixed.</span>
+          </span>
+          <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+        </button>
+        <div class="notification-lab-content${isOpen ? "" : " hidden"}" id="notification-lab-content">
+          ${buildNotificationTestResultMarkup()}
+          <div class="notification-lab-grid">
+            <form id="notification-test-form" class="notification-test-form">
+              <div class="form-grid two-column">
+                <div class="form-field">
+                  <label for="notification-test-kind">Notification type</label>
+                  <select id="notification-test-kind" name="kind">
+                    <option value="new_market">New market</option>
+                    <option value="closing_soon">Closing soon</option>
+                    <option value="resolution">Resolution</option>
+                    <option value="void">Voided market</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="notification-test-market">Preview market</label>
+                  <select id="notification-test-market" name="marketId">
+                    <option value="">Fictional sample</option>
+                    ${markets.map((market) => `
+                      <option value="${market.id}"${market.id === selectedMarket?.id ? " selected" : ""}>${escapeHtml(market.question)}</option>
+                    `).join("")}
+                  </select>
+                </div>
               </div>
               <div class="form-field">
-                <label for="notification-test-market">Preview market</label>
-                <select id="notification-test-market" name="marketId">
-                  <option value="">Fictional sample</option>
-                  ${markets.map((market) => `
-                    <option value="${market.id}"${market.id === selectedMarket?.id ? " selected" : ""}>${escapeHtml(market.question)}</option>
-                  `).join("")}
-                </select>
+                <label for="notification-test-title">Title</label>
+                <input id="notification-test-title" name="title" maxlength="82" value="${escapeAttribute(template.title)}" required />
               </div>
-            </div>
-            <div class="form-field">
-              <label for="notification-test-title">Title</label>
-              <input id="notification-test-title" name="title" maxlength="82" value="${escapeAttribute(template.title)}" required />
-            </div>
-            <div class="form-field">
-              <label for="notification-test-body">Message</label>
-              <textarea id="notification-test-body" name="body" maxlength="300" required>${escapeHtml(template.body)}</textarea>
-            </div>
-            <input id="notification-test-target" name="targetUrl" type="hidden" value="${escapeAttribute(template.targetUrl)}" />
-            <fieldset class="notification-device-field">
-              <legend>Your delivery devices</legend>
-              ${deviceOptions || '<p class="push-capability-note is-warning">Enable push from Settings on one of your devices. The test will still create an administrator audit record.</p>'}
-            </fieldset>
-            <button class="button button-primary" type="submit">Send test to me</button>
-          </form>
+              <div class="form-field">
+                <label for="notification-test-body">Message</label>
+                <textarea id="notification-test-body" name="body" maxlength="300" required>${escapeHtml(template.body)}</textarea>
+              </div>
+              <input id="notification-test-target" name="targetUrl" type="hidden" value="${escapeAttribute(template.targetUrl)}" />
+              <fieldset class="notification-device-field">
+                <legend>Your delivery devices</legend>
+                ${deviceOptions || '<p class="push-capability-note is-warning">Enable push from Settings on one of your devices. The test will still create an administrator audit record.</p>'}
+              </fieldset>
+              <button class="button button-primary" type="submit">Send test to me</button>
+            </form>
 
-          <div class="notification-preview-panel">
-            <p class="eyebrow">Lock-screen preview</p>
-            <div class="notification-preview">
-              <div class="notification-preview-app">
-                <img src="img/icon-192.png" alt="" />
-                <span>The Friend Exchange</span>
-                <small>now</small>
+            <div class="notification-preview-panel">
+              <p class="eyebrow">Lock-screen preview</p>
+              <div class="notification-preview">
+                <div class="notification-preview-app">
+                  <img src="img/icon-192.png" alt="" />
+                  <span>The Friend Exchange</span>
+                  <small>now</small>
+                </div>
+                <strong id="notification-preview-title">[TEST] ${escapeHtml(template.title)}</strong>
+                <p id="notification-preview-body">${escapeHtml(template.body)}</p>
               </div>
-              <strong id="notification-preview-title">[TEST] ${escapeHtml(template.title)}</strong>
-              <p id="notification-preview-body">${escapeHtml(template.body)}</p>
+              <p class="fine-print">Operating systems may truncate long questions. Tapping opens the selected market.</p>
             </div>
-            <p class="fine-print">Operating systems may truncate long questions. Tapping opens the selected market.</p>
           </div>
         </div>
       </section>
@@ -5335,8 +5502,24 @@
       return buildAdminNotificationUnavailableMarkup(notificationError);
     }
 
-    const recentNotifications = (overview.notifications || []).map((notification) => `
-      <tr>
+    const notifications = overview.notifications || [];
+    const activeFilter = NOTIFICATION_HISTORY_FILTERS.some(
+      (filter) => filter.value === state.notificationHistoryFilter,
+    ) ? state.notificationHistoryFilter : "all";
+    const matchesFilter = (notification) => {
+      if (activeFilter === "failed") return Number(notification.failed_count) > 0;
+      if (activeFilter === "tests") return Boolean(notification.is_test);
+      if (activeFilter === "automatic") return !notification.is_test;
+      return true;
+    };
+    let matchingIndex = 0;
+    const matchingCount = notifications.filter(matchesFilter).length;
+    const recentNotifications = notifications.map((notification) => {
+      const matches = matchesFilter(notification);
+      const visible = matches && matchingIndex < NOTIFICATION_HISTORY_PAGE_SIZE;
+      if (matches) matchingIndex += 1;
+      return `
+      <tr data-notification-history-row data-history-category="${notification.is_test ? "tests" : "automatic"}" data-history-failed="${Number(notification.failed_count) > 0}"${visible ? "" : ' class="hidden"'}>
         <td>
           <div class="notification-history-title">
             <strong>${escapeHtml(notification.title)}</strong>
@@ -5355,13 +5538,23 @@
         </td>
         <td class="mono">${escapeHtml(formatDateTime(notification.created_at))}</td>
       </tr>
-    `).join("");
+    `;
+    }).join("");
+    const visibleCount = Math.min(NOTIFICATION_HISTORY_PAGE_SIZE, matchingCount);
+    const pagination = notifications.length > NOTIFICATION_HISTORY_PAGE_SIZE ? `
+      <div class="notification-history-pagination${matchingCount ? "" : " hidden"}" id="notification-history-pagination">
+        <span id="notification-history-count">Showing ${formatNumber(visibleCount)} of ${formatNumber(matchingCount)} matching records</span>
+        <div>
+          <button class="button button-ghost button-small hidden" id="show-less-notification-history" type="button">Show less</button>
+          <button class="button button-secondary button-small${matchingCount > NOTIFICATION_HISTORY_PAGE_SIZE ? "" : " hidden"}" id="view-more-notification-history" type="button">View more</button>
+        </div>
+      </div>
+    ` : "";
 
     return `
-      ${buildAdminNotificationControlsMarkup(overview)}
       <section class="table-card notification-history-card">
         <div class="admin-table-heading">
-          <div><h2>Recent notifications</h2><p>Select a delivery summary to inspect its device attempts.</p></div>
+          <div><h2>Notification history</h2><p>Select a delivery summary to inspect its device attempts.</p></div>
           <details class="admin-overflow-menu">
             <summary class="icon-button" aria-label="History actions"><i class="fa-solid fa-ellipsis"></i></summary>
             <div class="admin-overflow-menu-popover">
@@ -5369,30 +5562,36 @@
             </div>
           </details>
         </div>
+        ${notifications.length ? `
+          <div class="notification-history-toolbar" role="group" aria-label="Filter notification history">
+            ${NOTIFICATION_HISTORY_FILTERS.map((filter) => `
+              <button class="filter-chip${filter.value === activeFilter ? " active" : ""}" data-notification-history-filter="${filter.value}" type="button" aria-pressed="${filter.value === activeFilter}">${filter.label}</button>
+            `).join("")}
+          </div>
+        ` : ""}
         ${recentNotifications ? `
-          <div data-scrollable-table><div class="table-scroll">
+          <div id="notification-history-table-wrap"${matchingCount ? "" : ' class="hidden"'} data-scrollable-table><div class="table-scroll">
             <table class="data-table notification-history-table">
               <thead><tr><th>Notice</th><th>Type</th><th>Mode</th><th>Recipients</th><th>Delivery</th><th>Created</th></tr></thead>
               <tbody>${recentNotifications}</tbody>
             </table>
           </div></div>
+          <div class="notification-history-filter-empty${matchingCount ? " hidden" : ""}" id="notification-history-filter-empty"><p>No notifications match this filter.</p></div>
+          ${pagination}
         ` : '<div class="notification-empty"><p>No notification records yet.</p></div>'}
       </section>
     `;
   }
 
   function buildAdminNotificationsMarkup(overview, notificationError = null) {
-    const notificationView = getAdminNotificationView();
-    const historyActive = notificationView === "history";
+    if (notificationError || !overview) {
+      return buildAdminNotificationUnavailableMarkup(notificationError);
+    }
 
     return `
-      <nav class="admin-subsection-nav" aria-label="Notification tools">
-        <a class="admin-subsection-link${historyActive ? "" : " is-active"}" href="#/admin/notifications">Test lab</a>
-        <a class="admin-subsection-link${historyActive ? " is-active" : ""}" href="#/admin/notifications/history">History</a>
-      </nav>
-      ${historyActive
-        ? buildAdminNotificationHistoryMarkup(overview, notificationError)
-        : buildAdminNotificationLabMarkup(overview, notificationError)}
+      ${buildAdminNotificationControlsMarkup(overview)}
+      ${buildAdminNotificationHistoryMarkup(overview)}
+      ${buildAdminNotificationLabMarkup(overview)}
     `;
   }
 
@@ -5407,14 +5606,39 @@
   }
 
   function bindAdminPageEvents(invitations) {
+    const joinedUserIds = invitations
+      .filter((invitation) => invitation.registered_user_id && invitation.confirmed_at)
+      .map((invitation) => invitation.registered_user_id);
     document.querySelectorAll("[data-admin-approve-email]").forEach((button) => {
       button.addEventListener("click", () => openApproveEmailModal(invitations));
     });
-    document.querySelectorAll("[data-manage-member]").forEach((button) => {
-      button.addEventListener("click", () => openAdminMemberModal(button.dataset.manageMember));
+    document.querySelectorAll("[data-admin-adjust-points]").forEach((button) => {
+      button.addEventListener("click", () => openAdminPointsModal("", joinedUserIds));
+    });
+    document.querySelectorAll("[data-admin-edit-profile]").forEach((button) => {
+      button.addEventListener("click", () => openAdminProfileModal("", joinedUserIds));
+    });
+    document.querySelectorAll("[data-adjust-member-points]").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest("details")?.removeAttribute("open");
+        openAdminPointsModal(button.dataset.adjustMemberPoints, joinedUserIds);
+      });
+    });
+    document.querySelectorAll("[data-edit-member-profile]").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest("details")?.removeAttribute("open");
+        openAdminProfileModal(button.dataset.editMemberProfile, joinedUserIds);
+      });
+    });
+    document.querySelectorAll("[data-resend-confirmation]").forEach((button) => {
+      button.addEventListener("click", () => resendSignupConfirmation(
+        button.dataset.resendConfirmation,
+        button,
+      ));
     });
     document.querySelectorAll("[data-remove-invitation]").forEach((button) => {
       button.addEventListener("click", () => {
+        button.closest("details")?.removeAttribute("open");
         openRemoveInvitationModal(button.dataset.removeInvitation);
       });
     });
@@ -5480,65 +5704,29 @@
     });
   }
 
-  function openAdminMemberModal(initialUserId = "") {
+  async function resendSignupConfirmation(email, button = null) {
     if (!state.profile?.is_admin) return;
 
-    const sortedProfiles = [...state.profiles].sort((a, b) =>
-      a.display_name.localeCompare(b.display_name),
-    );
-    openModal(`
-      <div class="modal-header">
-        <div>
-          <p class="eyebrow">People &amp; access</p>
-          <h2>Manage member</h2>
-          <p>Choose a member, then select the change you need to make.</p>
-        </div>
-        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-field">
-          <label for="admin-member-user">Member</label>
-          <select id="admin-member-user">
-            <option value=""${initialUserId ? "" : " selected"}>Choose a member…</option>
-            ${sortedProfiles.map((profile) => `
-              <option value="${escapeAttribute(profile.id)}"${profile.id === initialUserId ? " selected" : ""}>${escapeHtml(profile.display_name)}</option>
-            `).join("")}
-          </select>
-        </div>
-        <div class="admin-member-modal-summary" id="admin-member-summary"></div>
-        <div class="admin-member-modal-actions">
-          <button class="button button-secondary" id="admin-member-edit-profile" type="button" disabled>Edit profile</button>
-          <button class="button button-secondary" id="admin-member-adjust-points" type="button" disabled>Adjust points</button>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="button button-secondary" data-modal-close type="button">Done</button>
-      </div>
-    `, "admin-member-modal");
+    setButtonLoading(button, true, "Sending…");
+    const { error } = await state.client.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl(),
+      },
+    });
+    setButtonLoading(button, false);
 
-    const userSelect = document.querySelector("#admin-member-user");
-    const summary = document.querySelector("#admin-member-summary");
-    const editButton = document.querySelector("#admin-member-edit-profile");
-    const pointsButton = document.querySelector("#admin-member-adjust-points");
+    if (error) {
+      showToast(error.message, "error");
+      return;
+    }
 
-    const updateMemberSummary = () => {
-      const profile = state.profiles.find((item) => item.id === userSelect.value);
-      editButton.disabled = !profile;
-      pointsButton.disabled = !profile;
-      summary.innerHTML = profile ? `
-        ${renderProfileAvatar(profile)}
-        <div><strong>${escapeHtml(profile.display_name)}</strong><small>${formatNumber(profile.balance)} points · ${profile.is_admin ? "Administrator" : "Member"}</small></div>
-      ` : '<p class="muted">Select a member to see the available actions.</p>';
-    };
-
-    userSelect?.addEventListener("change", updateMemberSummary);
-    editButton?.addEventListener("click", () => openAdminProfileModal(userSelect.value));
-    pointsButton?.addEventListener("click", () => openAdminPointsModal(userSelect.value));
-    updateMemberSummary();
-    if (!initialUserId) userSelect?.focus();
+    button?.closest("details")?.removeAttribute("open");
+    showToast(`A new confirmation email was sent to ${email}.`, "success");
   }
 
-  async function applyNotificationMode(mode, button = null) {
+  async function applyNotificationMode(mode, button = null, { closeOnSuccess = false } = {}) {
     setButtonLoading(button, true, "Updating…");
     const { error } = await state.client.rpc("admin_set_notification_mode", {
       p_delivery_mode: mode,
@@ -5550,12 +5738,30 @@
       return;
     }
 
-    closeModal();
+    if (closeOnSuccess) closeModal();
     await renderAdmin();
-    showToast(`Notification delivery is now ${mode}.`, "success");
+    const modeLabel = NOTIFICATION_MODE_OPTIONS.find((option) => option.value === mode)?.label
+      || mode;
+    showToast(`Automatic notifications are now ${modeLabel.toLowerCase()}.`, "success");
+  }
+
+  function getLiveNotificationImpact(overview = state.notificationAdminOverview) {
+    const impact = overview?.live_impact;
+    if (!impact) return null;
+
+    return [
+      { key: "new_market", label: "New markets", icon: "bullhorn" },
+      { key: "closing_soon", label: "Closing soon", icon: "hourglass-half" },
+      { key: "resolution", label: "Resolutions & voids", icon: "gavel" },
+    ].map((item) => ({
+      ...item,
+      members: Number(impact[item.key]?.members) || 0,
+      devices: Number(impact[item.key]?.devices) || 0,
+    }));
   }
 
   function confirmLiveNotificationMode(button) {
+    const liveImpact = getLiveNotificationImpact();
     openModal(`
       <div class="modal-header">
         <div>
@@ -5566,6 +5772,26 @@
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
       <div class="modal-body">
+        <section class="notification-live-impact" aria-label="Current opted-in notification reach">
+          <div class="notification-live-impact-heading">
+            <strong>Current opted-in reach</strong>
+            <span>Based on active push devices</span>
+          </div>
+          ${liveImpact ? `
+            <div class="notification-live-impact-grid">
+              ${liveImpact.map((item) => `
+                <div data-live-impact-key="${item.key}">
+                  <span class="notification-live-impact-icon"><i class="fa-solid fa-${item.icon}" aria-hidden="true"></i></span>
+                  <strong>${escapeHtml(item.label)}</strong>
+                  <span>${formatNumber(item.members)} ${pluralize(item.members, "member")} · ${formatNumber(item.devices)} ${pluralize(item.devices, "device")}</span>
+                </div>
+              `).join("")}
+            </div>
+            <p>Actual totals can vary by event; a market creator does not receive their own new-market alert.</p>
+          ` : `
+            <p>Current reach totals are unavailable. Live delivery will still follow each member’s saved preferences.</p>
+          `}
+        </section>
         <p class="trade-warning">Test and shadow records will not be sent retroactively.</p>
       </div>
       <div class="modal-footer">
@@ -5575,48 +5801,7 @@
     `);
 
     document.querySelector("#confirm-live-notifications")?.addEventListener("click", (event) => {
-      void applyNotificationMode("live", event.currentTarget || button);
-    });
-  }
-
-  function openNotificationModeModal(overview) {
-    const mode = overview.mode || "off";
-    openModal(`
-      <div class="modal-header">
-        <div>
-          <p class="eyebrow">Notifications</p>
-          <h2>Change delivery mode</h2>
-          <p>Choose how future market events enter the delivery system.</p>
-        </div>
-        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
-      </div>
-      <form id="notification-mode-form">
-        <div class="modal-body">
-          <div class="form-field">
-            <label for="notification-delivery-mode">Delivery mode</label>
-            <select id="notification-delivery-mode" name="deliveryMode">
-              <option value="off"${mode === "off" ? " selected" : ""}>Off — create nothing</option>
-              <option value="test"${mode === "test" ? " selected" : ""}>Test — administrators only</option>
-              <option value="live"${mode === "live" ? " selected" : ""}>Live — opted-in members</option>
-            </select>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
-          <button class="button button-primary" type="submit">Update mode</button>
-        </div>
-      </form>
-    `);
-
-    document.querySelector("#notification-mode-form")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const selectedMode = String(new FormData(event.currentTarget).get("deliveryMode") || "off");
-      const button = event.currentTarget.querySelector("button[type='submit']");
-      if (selectedMode === "live" && mode !== "live") {
-        confirmLiveNotificationMode(button);
-        return;
-      }
-      await applyNotificationMode(selectedMode, button);
+      void applyNotificationMode("live", event.currentTarget || button, { closeOnSuccess: true });
     });
   }
 
@@ -5632,12 +5817,21 @@
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
       <div class="modal-body">
-        <div class="notification-diagnostic-summary">
-          <span class="status-pill ${diagnostics.needsAttention ? "status-void" : "status-resolved"}">${diagnostics.needsAttention ? "Needs attention" : "Ready"}</span>
+        <div class="notification-diagnostic-summary ${diagnostics.needsAttention ? "is-attention" : "is-ready"}">
+          <span class="notification-diagnostic-summary-icon" aria-hidden="true"><i class="fa-solid fa-${diagnostics.needsAttention ? "triangle-exclamation" : "circle-check"}"></i></span>
+          <div>
+            <strong>${escapeHtml(diagnostics.headline)}</strong>
+            <p>${escapeHtml(diagnostics.summary)}</p>
+          </div>
         </div>
         <div class="notification-diagnostic-grid" aria-label="Current browser push diagnostics">
-          ${diagnostics.fields.map(([label, value]) => `
-            <div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+          ${diagnostics.fields.map((field) => `
+            <div class="notification-diagnostic-item is-${field.state}">
+              <span>${escapeHtml(field.label)}</span>
+              <strong><i class="fa-solid fa-${field.state === "healthy" ? "circle-check" : field.state === "blocker" ? "circle-exclamation" : "circle-info"}" aria-hidden="true"></i>${escapeHtml(field.value)}</strong>
+              <small>${escapeHtml(field.detail)}</small>
+              ${field.action === "push-settings" ? '<button class="button button-secondary button-small notification-diagnostic-action" id="open-push-settings-from-diagnostics" type="button">Open push settings</button>' : ""}
+            </div>
           `).join("")}
         </div>
       </div>
@@ -5645,6 +5839,11 @@
         <button class="button button-secondary" data-modal-close type="button">Done</button>
       </div>
     `, "notification-diagnostics-modal");
+
+    document.querySelector("#open-push-settings-from-diagnostics")?.addEventListener("click", () => {
+      closeModal();
+      window.location.hash = "#/settings/push";
+    });
   }
 
   function openNotificationDeliveryDetailsModal(notification, deliveries) {
@@ -5728,15 +5927,41 @@
     });
   }
 
-  function bindAdminNotificationLabEvents() {
+  function bindAdminNotificationPageEvents() {
     const overview = state.notificationAdminOverview;
     if (!overview) return;
 
-    document.querySelector("[data-change-notification-mode]")?.addEventListener("click", () => {
-      openNotificationModeModal(overview);
+    const labToggle = document.querySelector("#notification-lab-toggle");
+    const labPanel = labToggle?.closest(".notification-lab-panel");
+    const labContent = document.querySelector("#notification-lab-content");
+    labToggle?.addEventListener("click", () => {
+      state.notificationLabOpen = !state.notificationLabOpen;
+      labToggle.setAttribute("aria-expanded", String(state.notificationLabOpen));
+      labContent?.classList.toggle("hidden", !state.notificationLabOpen);
+      labPanel?.classList.toggle("is-open", state.notificationLabOpen);
     });
+
     document.querySelector("[data-open-notification-diagnostics]")?.addEventListener("click", () => {
       openNotificationDiagnosticsModal(overview);
+    });
+    const modeForm = document.querySelector("#notification-mode-form");
+    const modeInputs = [...document.querySelectorAll("[name='deliveryMode']")];
+    const applyModeButton = modeForm?.querySelector("button[type='submit']");
+    const currentMode = modeForm?.dataset.currentMode || "off";
+    modeInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        applyModeButton?.classList.toggle("hidden", input.value === currentMode);
+      });
+    });
+    modeForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedMode = String(new FormData(event.currentTarget).get("deliveryMode") || currentMode);
+      if (selectedMode === currentMode) return;
+      if (selectedMode === "live" && currentMode !== "live") {
+        confirmLiveNotificationMode(applyModeButton);
+        return;
+      }
+      await applyNotificationMode(selectedMode, applyModeButton);
     });
     document.querySelectorAll("[data-view-notification-deliveries]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -5754,6 +5979,82 @@
     document.querySelector("#clear-notification-test-history")?.addEventListener("click", () => {
       openClearNotificationTestHistoryModal();
     });
+
+    const historyRows = [...document.querySelectorAll("[data-notification-history-row]")];
+    const historyFilterButtons = [...document.querySelectorAll("[data-notification-history-filter]")];
+    const historyTableWrap = document.querySelector("#notification-history-table-wrap");
+    const historyFilterEmpty = document.querySelector("#notification-history-filter-empty");
+    const historyPagination = document.querySelector("#notification-history-pagination");
+    const viewMoreHistoryButton = document.querySelector("#view-more-notification-history");
+    const showLessHistoryButton = document.querySelector("#show-less-notification-history");
+    const historyCount = document.querySelector("#notification-history-count");
+    let historyVisibleLimit = NOTIFICATION_HISTORY_PAGE_SIZE;
+    const rowMatchesHistoryFilter = (row, filter) => {
+      if (filter === "failed") return row.dataset.historyFailed === "true";
+      if (filter === "tests" || filter === "automatic") {
+        return row.dataset.historyCategory === filter;
+      }
+      return true;
+    };
+    const updateVisibleHistory = () => {
+      const activeFilter = NOTIFICATION_HISTORY_FILTERS.some(
+        (filter) => filter.value === state.notificationHistoryFilter,
+      ) ? state.notificationHistoryFilter : "all";
+      const matchingRows = historyRows.filter((row) => rowMatchesHistoryFilter(row, activeFilter));
+      const visibleCount = Math.min(historyVisibleLimit, matchingRows.length);
+      historyRows.forEach((row) => {
+        const matchingIndex = matchingRows.indexOf(row);
+        row.classList.toggle("hidden", matchingIndex < 0 || matchingIndex >= visibleCount);
+      });
+      historyFilterButtons.forEach((button) => {
+        const isActive = button.dataset.notificationHistoryFilter === activeFilter;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+      });
+      historyTableWrap?.classList.toggle("hidden", matchingRows.length === 0);
+      historyFilterEmpty?.classList.toggle("hidden", matchingRows.length > 0);
+      historyPagination?.classList.toggle("hidden", matchingRows.length === 0);
+      if (historyCount) {
+        historyCount.textContent = `Showing ${formatNumber(visibleCount)} of ${formatNumber(matchingRows.length)} matching records`;
+      }
+      viewMoreHistoryButton?.classList.toggle("hidden", visibleCount >= matchingRows.length);
+      showLessHistoryButton?.classList.toggle(
+        "hidden",
+        visibleCount <= NOTIFICATION_HISTORY_PAGE_SIZE,
+      );
+    };
+    const applyHistoryFilter = (filter, { scroll = false } = {}) => {
+      state.notificationHistoryFilter = NOTIFICATION_HISTORY_FILTERS.some(
+        (option) => option.value === filter,
+      ) ? filter : "all";
+      historyVisibleLimit = NOTIFICATION_HISTORY_PAGE_SIZE;
+      updateVisibleHistory();
+      if (scroll) {
+        document.querySelector(".notification-history-card")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }
+    };
+
+    historyFilterButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        applyHistoryFilter(button.dataset.notificationHistoryFilter || "all");
+      });
+    });
+    document.querySelector("[data-show-failed-notifications]")?.addEventListener("click", () => {
+      applyHistoryFilter("failed", { scroll: true });
+    });
+
+    viewMoreHistoryButton?.addEventListener("click", () => {
+      historyVisibleLimit += NOTIFICATION_HISTORY_PAGE_SIZE;
+      updateVisibleHistory();
+    });
+    showLessHistoryButton?.addEventListener("click", () => {
+      historyVisibleLimit = NOTIFICATION_HISTORY_PAGE_SIZE;
+      updateVisibleHistory();
+    });
+    updateVisibleHistory();
 
     const testForm = document.querySelector("#notification-test-form");
     const kindInput = document.querySelector("#notification-test-kind");
@@ -5783,6 +6084,8 @@
 
     testForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      state.notificationLabOpen = true;
+      state.notificationTestResult = null;
       const form = new FormData(event.currentTarget);
       const submit = event.currentTarget.querySelector("button[type='submit']");
       const subscriptionIds = form.getAll("subscriptionId").map(String);
@@ -5798,6 +6101,13 @@
 
       if (error) {
         setButtonLoading(submit, false);
+        state.notificationTestResult = {
+          tone: "error",
+          title: "Test could not be sent.",
+          detail: error.message,
+          notificationId: null,
+        };
+        await renderAdmin();
         showToast(error.message, "error");
         return;
       }
@@ -5808,14 +6118,50 @@
           body: { delivery_id: deliveryId },
         })
       ));
-      const failures = results.filter((result) => result.error).length;
+      const deliveredCount = results.filter(
+        (result) => !result.error && result.data?.status === "sent",
+      ).length;
+      const failureCount = results.filter(
+        (result) => result.error || ["failed", "expired"].includes(result.data?.status),
+      ).length;
+      const pendingCount = Math.max(deliveryIds.length - deliveredCount - failureCount, 0);
+      const notificationId = Number(data?.notification_id) || null;
+      if (!deliveryIds.length) {
+        state.notificationTestResult = {
+          tone: "pending",
+          title: "Test record created.",
+          detail: "No push devices were selected, so no lock-screen delivery was attempted.",
+          notificationId,
+        };
+      } else if (failureCount) {
+        state.notificationTestResult = {
+          tone: "error",
+          title: `Delivered to ${formatNumber(deliveredCount)} of ${formatNumber(deliveryIds.length)} ${pluralize(deliveryIds.length, "device")}.`,
+          detail: `${formatNumber(failureCount)} ${pluralize(failureCount, "delivery")} failed. Open the delivery details for the recorded response.`,
+          notificationId,
+        };
+      } else if (pendingCount) {
+        state.notificationTestResult = {
+          tone: "pending",
+          title: `Test queued for ${formatNumber(deliveryIds.length)} ${pluralize(deliveryIds.length, "device")}.`,
+          detail: `${formatNumber(pendingCount)} ${pluralize(pendingCount, "delivery")} still processing.`,
+          notificationId,
+        };
+      } else {
+        state.notificationTestResult = {
+          tone: "success",
+          title: `Delivered to ${formatNumber(deliveredCount)} of ${formatNumber(deliveryIds.length)} ${pluralize(deliveryIds.length, "device")}.`,
+          detail: "The selected push services accepted the test.",
+          notificationId,
+        };
+      }
       setButtonLoading(submit, false);
       await refreshNotificationData();
       await renderAdmin();
 
       if (!deliveryIds.length) {
         showToast("Test record created. Enable a push device to test lock-screen delivery.", "success");
-      } else if (failures) {
+      } else if (failureCount) {
         showToast("Test filed, but one or more push attempts failed. Review the delivery table.", "error");
       } else {
         showToast("Test filed and dispatched to your selected devices.", "success");
@@ -6717,10 +7063,13 @@
     ].join("");
   }
 
-  function openAdminProfileModal(initialUserId = "") {
+  function openAdminProfileModal(initialUserId = "", allowedUserIds = null) {
     if (!state.profile?.is_admin) return;
 
-    const sortedProfiles = [...state.profiles].sort((a, b) =>
+    const allowedUserIdSet = Array.isArray(allowedUserIds) ? new Set(allowedUserIds) : null;
+    const sortedProfiles = state.profiles.filter((profile) =>
+      !allowedUserIdSet || allowedUserIdSet.has(profile.id)
+    ).sort((a, b) =>
       a.display_name.localeCompare(b.display_name)
     );
     const iconChoices = buildProfileIconChoices(null);
@@ -6832,10 +7181,13 @@
     });
   }
 
-  function openAdminPointsModal(initialUserId = "") {
+  function openAdminPointsModal(initialUserId = "", allowedUserIds = null) {
     if (!state.profile.is_admin) return;
 
-    const sortedProfiles = [...state.profiles].sort((a, b) => a.display_name.localeCompare(b.display_name));
+    const allowedUserIdSet = Array.isArray(allowedUserIds) ? new Set(allowedUserIds) : null;
+    const sortedProfiles = state.profiles.filter((profile) =>
+      !allowedUserIdSet || allowedUserIdSet.has(profile.id)
+    ).sort((a, b) => a.display_name.localeCompare(b.display_name));
     openModal(`
       <div class="modal-header">
         <div>

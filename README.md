@@ -31,8 +31,8 @@ There is no build step, package manager, framework, or custom server.
 - Per-device, opt-in Web Push preferences for new markets, closing soon, and
   resolution or void alerts
 - A focused administrator workspace with People and Notifications views,
-  including responsive member cards, protected notification testing, and
-  expandable delivery history
+  including a unified people registry, status-aware member actions, protected
+  notification testing, and an expandable recent-delivery history
 - Aggregated monthly allowance distributions in the exchange activity feed
 - Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
@@ -126,7 +126,9 @@ Existing notification installations should also apply
 `migrations/20260901_notification_test_history_cleanup.sql` to enable the
 admin-only **Clear test history** action, followed by
 `migrations/20260901_push_subscription_device_info.sql` so enrolled-device
-icons can distinguish phones, tablets, and computers.
+icons can distinguish phones, tablets, and computers. Apply
+`migrations/20260902_notification_live_impact.sql` to add the category-specific
+member and device reach shown before enabling Live delivery.
 
 ## 2. Configure notification delivery
 
@@ -196,12 +198,12 @@ pushes.
 ### Activate through the Notification Test lab
 
 Publish the updated browser files, sign in as an administrator, and open
-**Admin → Notifications → Test lab**:
+**Admin → Notifications**:
 
 1. Leave the system **Off** while checking the configuration.
 2. Open the gear, then enable push under **Settings → Push notifications** on
    each administrator device.
-3. Send self-only tests, then review **History**.
+3. Expand **Test lab**, send self-only tests, then review **Notification history**.
 4. Change the mode to **Test** to create shadow notifications for real market
    events while restricting recipients to administrators.
 5. Change the mode to **Live** only after testing is complete.

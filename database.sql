@@ -2775,6 +2775,7 @@ returns table (
   id uuid,
   endpoint text,
   device_label text,
+  user_agent text,
   created_at timestamptz,
   last_seen_at timestamptz
 )
@@ -2794,6 +2795,7 @@ begin
     subscription.id,
     subscription.endpoint,
     subscription.device_label,
+    subscription.user_agent,
     subscription.created_at,
     subscription.last_seen_at
   from public.push_subscriptions as subscription
@@ -2981,6 +2983,41 @@ begin
       select count(*)
       from public.push_subscriptions
       where disabled_at is null
+    ),
+    'live_impact', jsonb_build_object(
+      'new_market', (
+        select jsonb_build_object(
+          'members', count(distinct preference.user_id)::integer,
+          'devices', count(subscription.id)::integer
+        )
+        from public.notification_preferences as preference
+        join public.push_subscriptions as subscription
+          on subscription.user_id = preference.user_id
+         and subscription.disabled_at is null
+        where preference.new_market_push = true
+      ),
+      'closing_soon', (
+        select jsonb_build_object(
+          'members', count(distinct preference.user_id)::integer,
+          'devices', count(subscription.id)::integer
+        )
+        from public.notification_preferences as preference
+        join public.push_subscriptions as subscription
+          on subscription.user_id = preference.user_id
+         and subscription.disabled_at is null
+        where preference.closing_soon_push = true
+      ),
+      'resolution', (
+        select jsonb_build_object(
+          'members', count(distinct preference.user_id)::integer,
+          'devices', count(subscription.id)::integer
+        )
+        from public.notification_preferences as preference
+        join public.push_subscriptions as subscription
+          on subscription.user_id = preference.user_id
+         and subscription.disabled_at is null
+        where preference.resolution_push = true
+      )
     ),
     'pending_deliveries', (
       select count(*)
