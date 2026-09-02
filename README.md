@@ -30,9 +30,9 @@ There is no build step, package manager, framework, or custom server.
   enrolled-device cleanup
 - Per-device, opt-in Web Push preferences for new markets, closing soon, and
   resolution or void alerts
-- An administrator Notification Lab with lock-screen previews, self-only test
-  delivery, delivery diagnostics, test-history cleanup, and Off/Test/Live
-  rollout controls
+- A focused administrator workspace with People and Notifications views,
+  including responsive member cards, protected notification testing, and
+  expandable delivery history
 - Aggregated monthly allowance distributions in the exchange activity feed
 - Market creation by any confirmed member, with optional details and 2–6
   outcomes, including simple Yes/No questions
@@ -124,7 +124,9 @@ of re-running the complete setup. Notification support is installed by
 `migrations/20260901_notifications.sql`; it leaves delivery **Off**.
 Existing notification installations should also apply
 `migrations/20260901_notification_test_history_cleanup.sql` to enable the
-admin-only **Clear test history** action.
+admin-only **Clear test history** action, followed by
+`migrations/20260901_push_subscription_device_info.sql` so enrolled-device
+icons can distinguish phones, tablets, and computers.
 
 ## 2. Configure notification delivery
 
@@ -191,15 +193,15 @@ transaction commits. The Edge Function claims each delivery before sending, so
 webhook retries and an administrator test dispatch cannot produce duplicate
 pushes.
 
-### Activate through the Notification Lab
+### Activate through the Notification Test lab
 
 Publish the updated browser files, sign in as an administrator, and open
-**Admin → Notification Lab**:
+**Admin → Notifications → Test lab**:
 
 1. Leave the system **Off** while checking the configuration.
 2. Open the gear, then enable push under **Settings → Push notifications** on
    each administrator device.
-3. Send self-only tests and review the delivery table.
+3. Send self-only tests, then review **History**.
 4. Change the mode to **Test** to create shadow notifications for real market
    events while restricting recipients to administrators.
 5. Change the mode to **Live** only after testing is complete.

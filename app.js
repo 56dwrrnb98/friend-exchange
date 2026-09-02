@@ -788,6 +788,29 @@
     return "Browser device";
   }
 
+  function getPushDeviceIcon(subscription) {
+    const userAgent = String(subscription?.user_agent || "");
+    const deviceLabel = String(subscription?.device_label || "");
+
+    if (
+      /iPad|Tablet/i.test(userAgent) ||
+      (/Android/i.test(userAgent) && !/Mobile/i.test(userAgent)) ||
+      /iPad|tablet/i.test(deviceLabel)
+    ) {
+      return "fa-tablet-screen-button";
+    }
+
+    if (
+      /iPhone|iPod|Mobile/i.test(userAgent) ||
+      (/Android/i.test(userAgent) && /Mobile/i.test(userAgent)) ||
+      /iPhone|phone|Pixel|Galaxy/i.test(deviceLabel)
+    ) {
+      return "fa-mobile-screen-button";
+    }
+
+    return "fa-laptop";
+  }
+
   async function registerCurrentPushSubscription(deviceLabel) {
     const capability = getPushCapability();
     if (!capability.available) throw new Error(capability.message);
@@ -870,17 +893,18 @@
     const profileIconChoices = buildProfileIconChoices(state.profile);
     const deviceRows = state.pushSubscriptions.map((subscription) => {
       const isCurrentDevice = subscription.endpoint === currentSubscription?.endpoint;
+      const deviceIcon = getPushDeviceIcon(subscription);
       const lastSeen = subscription.last_seen_at
         ? formatRelativeDate(subscription.last_seen_at)
         : "recently";
       return `
         <div class="settings-device-row">
           <span class="settings-device-icon" aria-hidden="true">
-            <i class="fa-solid ${isCurrentDevice ? "fa-mobile-screen-button" : "fa-display"}"></i>
+            <i class="fa-solid ${deviceIcon}"></i>
           </span>
           <span class="settings-device-copy">
             <strong>${escapeHtml(subscription.device_label)}</strong>
-            <small>Last confirmed ${escapeHtml(lastSeen)}</small>
+            <small>Connected ${escapeHtml(lastSeen)}</small>
           </span>
           ${isCurrentDevice
             ? '<span class="tiny-pill notification-device-current">This device</span>'
@@ -1376,8 +1400,8 @@
 
   function getRoute() {
     const clean = (window.location.hash || "#/markets").replace(/^#\/?/, "");
-    const [page = "markets", id] = clean.split("/");
-    return { page, id };
+    const [page = "markets", id, subpage] = clean.split("/");
+    return { page, id, subpage };
   }
 
   function renderRoute() {
@@ -4874,12 +4898,15 @@
       return;
     }
 
+    const adminView = getAdminView();
+    const adminNotificationView = getAdminNotificationView();
+
     dom.main.innerHTML = `
       <div class="page-header">
         <div>
           <p class="eyebrow">Administrator</p>
           <h1>Exchange operations.</h1>
-          <p>Loading the invitation registry and its formidable paper trail.</p>
+          <p>Loading the administrative desk.</p>
         </div>
       </div>
       <div class="loading-grid">
@@ -4893,34 +4920,37 @@
       state.client.rpc("get_notification_admin_overview", { p_limit: 30 }),
       getCurrentPushSubscription(),
     ]);
-    const { data, error } = invitationResult;
-
-    if (getRoute().page !== "admin") return;
-
-    if (error) {
-      dom.main.innerHTML = `
-        <section class="empty-state">
-          <div class="empty-state-icon">!</div>
-          <h2>The invitation desk is temporarily unattended.</h2>
-          <p>${escapeHtml(error.message || "The invitation registry could not be loaded.")}</p>
-          <button class="button button-primary" id="retry-admin-button" type="button">Try again</button>
-        </section>
-      `;
-      document.querySelector("#retry-admin-button")?.addEventListener("click", renderAdmin);
-      return;
-    }
+    if (
+      getRoute().page !== "admin" ||
+      getAdminView() !== adminView ||
+      getAdminNotificationView() !== adminNotificationView
+    ) return;
 
     state.notificationAdminOverview = notificationResult.data || null;
     state.currentPushSubscriptionActive = Boolean(currentPushSubscription);
     state.currentPushSubscriptionEndpoint = currentPushSubscription?.endpoint || null;
-    dom.main.innerHTML = buildAdminInvitationMarkup(
-      data || [],
+    dom.main.innerHTML = buildAdminPageMarkup(
+      adminView,
+      invitationResult.data || [],
       notificationResult.data || null,
+      invitationResult.error || null,
       notificationResult.error || null,
     );
-    bindAdminInvitationEvents(data || []);
-    bindAdminNotificationLabEvents();
+    bindAdminPageEvents(invitationResult.data || []);
+    if (adminView === "notifications") bindAdminNotificationLabEvents();
     setupScrollableTableFades();
+  }
+
+  function getAdminView() {
+    const view = getRoute().id;
+    return view === "notifications" ? "notifications" : "people";
+  }
+
+  function getAdminNotificationView() {
+    const subpage = getRoute().subpage;
+    return subpage === "history" || subpage === "records" || subpage === "deliveries"
+      ? "history"
+      : "lab";
   }
 
   function getNotificationTemplate(kind = "new_market", market = null) {
@@ -4968,27 +4998,176 @@
     return labels[status] || status;
   }
 
-  function buildAdminNotificationLabMarkup(overview, notificationError = null) {
-    if (notificationError || !overview) {
+  function getAdminInvitationCounts(invitations) {
+    return {
+      joined: invitations.filter(
+        (invitation) => invitation.registered_user_id && invitation.confirmed_at,
+      ).length,
+      awaiting: invitations.filter(
+        (invitation) => invitation.registered_user_id && !invitation.confirmed_at,
+      ).length,
+      available: invitations.filter(
+        (invitation) => !invitation.registered_user_id,
+      ).length,
+    };
+  }
+
+  function buildAdminShellMarkup(activeView, content, badges = {}) {
+    const sections = [
+      { id: "people", label: "People", href: "#/admin" },
+      { id: "notifications", label: "Notifications", href: "#/admin/notifications" },
+    ];
+
+    return `
+      <div class="page-header admin-page-header">
+        <div>
+          <p class="eyebrow">Administrator</p>
+          <h1>Exchange operations.</h1>
+          <p>Manage the people, access, and delivery systems behind the exchange.</p>
+        </div>
+      </div>
+      <nav class="admin-section-nav" aria-label="Admin sections">
+        ${sections.map((section) => `
+          <a
+            class="admin-section-link${section.id === activeView ? " is-active" : ""}"
+            href="${section.href}"
+            ${section.id === activeView ? 'aria-current="page"' : ""}
+          >${section.label}${badges[section.id]
+            ? `<span class="admin-nav-badge">${escapeHtml(badges[section.id])}</span>`
+            : ""}</a>
+        `).join("")}
+      </nav>
+      <div class="admin-view">${content}</div>
+    `;
+  }
+
+  function buildAdminPageMarkup(
+    activeView,
+    invitations,
+    notificationOverview = null,
+    invitationError = null,
+    notificationError = null,
+  ) {
+    const counts = getAdminInvitationCounts(invitations);
+    const failedDeliveries = Number(notificationOverview?.failed_deliveries) || 0;
+    const badges = {
+      people: invitationError ? "!" : counts.awaiting ? formatNumber(counts.awaiting) : "",
+      notifications: notificationError ? "!" : failedDeliveries ? formatNumber(failedDeliveries) : "",
+    };
+    const content = activeView === "notifications"
+      ? buildAdminNotificationsMarkup(notificationOverview, notificationError)
+      : buildAdminPeopleMarkup(invitations, invitationError);
+
+    return buildAdminShellMarkup(activeView, content, badges);
+  }
+
+  function buildAdminPeopleMarkup(invitations, invitationError = null) {
+    const profiles = [...state.profiles].sort((a, b) =>
+      a.display_name.localeCompare(b.display_name),
+    );
+    const memberCards = profiles.map((profile) => `
+      <button
+        class="admin-member-card"
+        data-manage-member="${escapeAttribute(profile.id)}"
+        type="button"
+        aria-label="Manage ${escapeAttribute(profile.display_name)}"
+      >
+        ${renderProfileAvatar(profile)}
+        <span class="admin-member-identity">
+          <strong>${escapeHtml(profile.display_name)}</strong>
+          <small>${profile.created_at ? `Joined ${escapeHtml(formatDateTime(profile.created_at))}` : "Registered member"}</small>
+        </span>
+        ${profile.is_admin ? '<span class="tiny-pill admin-member-role">Admin</span>' : ""}
+        <span class="admin-member-balance"><strong>${formatNumber(profile.balance)}</strong><small>points</small></span>
+        <i class="fa-solid fa-chevron-right admin-member-chevron" aria-hidden="true"></i>
+      </button>
+    `).join("");
+
+    return `
+      <section class="table-card admin-members-card">
+        <div class="admin-table-heading">
+          <div><h2>Members</h2></div>
+        </div>
+        <div class="admin-member-list">
+          ${memberCards || '<div class="notification-empty"><p>No registered members found.</p></div>'}
+        </div>
+      </section>
+
+      ${buildAdminInvitationRegistryMarkup(invitations, invitationError)}
+    `;
+  }
+
+  function buildAdminInvitationRegistryMarkup(invitations, invitationError = null) {
+    if (invitationError) {
       return `
-        <section class="panel notification-lab-panel">
+        <section class="panel admin-registry-error">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">Notification Lab</p>
-              <h2>Delivery controls unavailable.</h2>
-              <p>${escapeHtml(notificationError?.message || "Install the notification migration to activate the lab.")}</p>
+              <h2>Approved emails unavailable</h2>
+              <p>${escapeHtml(invitationError.message || "The approved-email registry could not be loaded.")}</p>
             </div>
+            <button class="button button-secondary" id="retry-admin-button" type="button">Try again</button>
           </div>
         </section>
       `;
     }
 
-    const markets = getAllMarkets();
-    const selectedMarket = markets[0] || null;
-    const template = getNotificationTemplate("new_market", selectedMarket);
-    const mode = overview.mode || "off";
-    const modeLabel = mode === "off" ? "Off" : mode === "test" ? "Test" : "Live";
-    const modeTone = mode === "live" ? "status-resolved" : mode === "test" ? "status-closed" : "status-void";
+    const rows = invitations.map((invitation) => {
+      const isRegistered = Boolean(invitation.registered_user_id);
+      const isConfirmed = Boolean(invitation.confirmed_at);
+      const status = isConfirmed
+        ? { label: "Joined", className: "status-resolved" }
+        : isRegistered
+          ? { label: "Awaiting confirmation", className: "status-closed" }
+          : { label: "Approved", className: "status-open" };
+      const addedBy = invitation.added_by_display_name
+        || (isRegistered ? "Existing account" : "Administrator");
+      const traderName = invitation.registered_display_name
+        ? `<span class="muted">${escapeHtml(invitation.registered_display_name)}</span>`
+        : "";
+
+      return `
+        <tr>
+          <td><div class="invitation-email"><strong>${escapeHtml(invitation.email)}</strong>${traderName}</div></td>
+          <td><span class="status-pill ${status.className}">${status.label}</span></td>
+          <td>${escapeHtml(addedBy)}</td>
+          <td class="mono">${invitation.added_at ? escapeHtml(formatDateTime(invitation.added_at)) : "—"}</td>
+          <td>${isRegistered
+            ? '<span class="muted">Account retained</span>'
+            : `<button class="button button-ghost button-small" data-remove-invitation="${escapeAttribute(invitation.email)}" type="button">Remove</button>`}
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <section class="table-card admin-invitation-card">
+        <div class="admin-table-heading">
+          <div>
+            <h2>Approved emails</h2>
+            <p>Registered accounts remain in the ledger and cannot be removed here.</p>
+          </div>
+          <button class="button button-primary button-small" data-admin-approve-email type="button">Approve email</button>
+        </div>
+        ${invitations.length ? `
+          <div data-scrollable-table><div class="table-scroll">
+            <table class="data-table invitation-table">
+              <thead><tr><th>Email</th><th>Status</th><th>Approved by</th><th>Approved on</th><th>Action</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div></div>
+        ` : `
+          <div class="empty-state compact-empty-state">
+            <div class="empty-state-icon">@</div>
+            <h2>No approved addresses yet.</h2>
+            <p>Approve an email when the next friend is ready to join.</p>
+          </div>
+        `}
+      </section>
+    `;
+  }
+
+  function getAdminPushDiagnostics(overview) {
     const browserPermission = "Notification" in window
       ? window.Notification.permission
       : "unsupported";
@@ -5003,34 +5182,73 @@
     const lastSuccessfulDelivery = overview.last_successful_delivery_at
       ? formatRelativeDate(overview.last_successful_delivery_at)
       : "None yet";
-    const recentNotifications = (overview.notifications || []).map((notification) => `
-      <tr>
-        <td>
-          <div class="notification-history-title">
-            <strong>${escapeHtml(notification.title)}</strong>
-            ${notification.is_test ? '<span class="tiny-pill">Test</span>' : ""}
+
+    return {
+      needsAttention:
+        !hasConfiguredVapidKey() ||
+        workerStatus !== "Active" ||
+        browserPermission === "denied" ||
+        !state.currentPushSubscriptionActive ||
+        installationStatus === "Home Screen required",
+      fields: [
+        ["Public push key", hasConfiguredVapidKey() ? "Configured" : "Needs setup"],
+        ["Service worker", workerStatus],
+        ["Browser permission", browserPermission],
+        ["Current browser", state.currentPushSubscriptionActive ? "Enrolled" : "Not enrolled"],
+        ["Installation", installationStatus],
+        ["Last accepted push", lastSuccessfulDelivery],
+      ],
+    };
+  }
+
+  function buildAdminNotificationControlsMarkup(overview) {
+    const mode = overview.mode || "off";
+    const modeLabel = mode === "off" ? "Off" : mode === "test" ? "Test" : "Live";
+    const modeTone = mode === "live" ? "status-resolved" : mode === "test" ? "status-closed" : "status-void";
+    const diagnostics = getAdminPushDiagnostics(overview);
+
+    return `
+      <section class="panel notification-command-bar">
+        <div class="notification-command-mode">
+          <span>Delivery mode</span>
+          <span class="status-pill ${modeTone}">${modeLabel}</span>
+        </div>
+        <div class="notification-command-summary">
+          <span>${formatNumber(overview.active_subscriptions)} active ${pluralize(overview.active_subscriptions, "device")}</span>
+          <span>${formatNumber(overview.pending_deliveries)} pending</span>
+          <span${Number(overview.failed_deliveries) ? ' class="has-failures"' : ""}>${formatNumber(overview.failed_deliveries)} failed or expired</span>
+        </div>
+        <div class="notification-command-actions">
+          <button class="button button-ghost button-small" data-open-notification-diagnostics type="button">
+            Diagnostics${diagnostics.needsAttention ? '<span class="admin-control-alert" aria-label="Needs attention">!</span>' : ""}
+          </button>
+          <button class="button button-secondary button-small" data-change-notification-mode type="button">Change mode</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function buildAdminNotificationUnavailableMarkup(notificationError = null) {
+    return `
+      <section class="panel notification-lab-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Delivery controls unavailable</h2>
+            <p>${escapeHtml(notificationError?.message || "Install the notification migration to activate the lab.")}</p>
           </div>
-          <span class="muted">${escapeHtml(notification.body)}</span>
-        </td>
-        <td>${escapeHtml(NOTIFICATION_KIND_LABELS[notification.kind] || notification.kind)}</td>
-        <td><span class="status-pill status-${escapeAttribute(notification.delivery_mode === "live" ? "resolved" : "closed")}">${escapeHtml(notification.delivery_mode)}</span></td>
-        <td class="mono">${formatNumber(notification.actual_recipient_count)} / ${formatNumber(notification.intended_recipient_count)}</td>
-        <td class="mono">${formatNumber(notification.sent_count)} sent${notification.failed_count ? ` · ${formatNumber(notification.failed_count)} failed` : ""}</td>
-        <td class="mono">${escapeHtml(formatDateTime(notification.created_at))}</td>
-      </tr>
-    `).join("");
-    const recentDeliveries = (overview.deliveries || []).map((delivery) => `
-      <tr>
-        <td>#${delivery.id}</td>
-        <td>${escapeHtml(delivery.display_name || "Unknown trader")}</td>
-        <td>${escapeHtml(delivery.device_label || "Removed device")}</td>
-        <td><span class="status-pill status-${delivery.status === "sent" ? "resolved" : delivery.status === "failed" || delivery.status === "expired" ? "void" : "closed"}">${escapeHtml(notificationDeliveryStatus(delivery.status))}</span></td>
-        <td class="mono">${formatNumber(delivery.attempt_count)}</td>
-        <td>${delivery.response_status
-          ? `<span class="mono">HTTP ${formatNumber(delivery.response_status)}</span>${delivery.last_error ? " · " : ""}`
-          : ""}${delivery.last_error ? escapeHtml(delivery.last_error) : delivery.response_status ? "" : '<span class="muted">—</span>'}</td>
-      </tr>
-    `).join("");
+        </div>
+      </section>
+    `;
+  }
+
+  function buildAdminNotificationLabMarkup(overview, notificationError = null) {
+    if (notificationError || !overview) {
+      return buildAdminNotificationUnavailableMarkup(notificationError);
+    }
+
+    const markets = getAllMarkets();
+    const selectedMarket = markets[0] || null;
+    const template = getNotificationTemplate("new_market", selectedMarket);
     const deviceOptions = state.pushSubscriptions.map((subscription) => {
       const isCurrentDevice = subscription.endpoint === state.currentPushSubscriptionEndpoint;
       return `
@@ -5039,72 +5257,23 @@
             <input type="checkbox" name="subscriptionId" value="${escapeAttribute(subscription.id)}" checked />
             <span>
               <strong>${escapeHtml(subscription.device_label)}</strong>
-              <small>Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}</small>
+              <small>Connected ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}</small>
             </span>
           </label>
-          ${isCurrentDevice
-            ? '<span class="tiny-pill notification-device-current">This device</span>'
-            : `<button class="text-button notification-device-remove" type="button" data-remove-push-subscription="${escapeAttribute(subscription.id)}">Remove device</button>`}
+          ${isCurrentDevice ? '<span class="tiny-pill notification-device-current">This device</span>' : ""}
         </div>
       `;
     }).join("");
 
     return `
+      ${buildAdminNotificationControlsMarkup(overview)}
       <section class="panel notification-lab-panel">
         <div class="panel-heading notification-lab-heading">
           <div>
-            <p class="eyebrow">Notification Lab</p>
-            <h2>Fine-tune delivery before the bell rings.</h2>
+            <h2>Test lab</h2>
             <p>Tests are enforced as administrator-to-self. Production wording remains fixed.</p>
           </div>
-          <span class="status-pill ${modeTone}">${modeLabel}</span>
         </div>
-
-        <div class="notification-lab-stats">
-          <div><span>Active devices</span><strong>${formatNumber(overview.active_subscriptions)}</strong></div>
-          <div><span>Pending deliveries</span><strong>${formatNumber(overview.pending_deliveries)}</strong></div>
-          <div><span>Failed or expired</span><strong>${formatNumber(overview.failed_deliveries)}</strong></div>
-        </div>
-
-        <form id="notification-mode-form" class="notification-mode-form">
-          <div class="form-field">
-            <label for="notification-delivery-mode">Global delivery mode</label>
-            <select id="notification-delivery-mode" name="deliveryMode">
-              <option value="off"${mode === "off" ? " selected" : ""}>Off — create nothing</option>
-              <option value="test"${mode === "test" ? " selected" : ""}>Test — administrators only</option>
-              <option value="live"${mode === "live" ? " selected" : ""}>Live — opted-in members</option>
-            </select>
-          </div>
-          <button class="button button-secondary" type="submit">Update mode</button>
-        </form>
-
-        <div class="notification-diagnostic-grid" aria-label="Current browser push diagnostics">
-          <div>
-            <span>Public push key</span>
-            <strong>${hasConfiguredVapidKey() ? "Configured" : "Needs setup"}</strong>
-          </div>
-          <div>
-            <span>Service worker</span>
-            <strong>${escapeHtml(workerStatus)}</strong>
-          </div>
-          <div>
-            <span>Browser permission</span>
-            <strong>${escapeHtml(browserPermission)}</strong>
-          </div>
-          <div>
-            <span>Current browser</span>
-            <strong>${state.currentPushSubscriptionActive ? "Enrolled" : "Not enrolled"}</strong>
-          </div>
-          <div>
-            <span>Installation</span>
-            <strong>${escapeHtml(installationStatus)}</strong>
-          </div>
-          <div>
-            <span>Last accepted push</span>
-            <strong>${escapeHtml(lastSuccessfulDelivery)}</strong>
-          </div>
-        </div>
-
         <div class="notification-lab-grid">
           <form id="notification-test-form" class="notification-test-form">
             <div class="form-grid two-column">
@@ -5158,189 +5327,135 @@
           </div>
         </div>
       </section>
+    `;
+  }
 
+  function buildAdminNotificationHistoryMarkup(overview, notificationError = null) {
+    if (notificationError || !overview) {
+      return buildAdminNotificationUnavailableMarkup(notificationError);
+    }
+
+    const recentNotifications = (overview.notifications || []).map((notification) => `
+      <tr>
+        <td>
+          <div class="notification-history-title">
+            <strong>${escapeHtml(notification.title)}</strong>
+            ${notification.is_test ? '<span class="tiny-pill">Test</span>' : ""}
+          </div>
+          <span class="muted">${escapeHtml(notification.body)}</span>
+        </td>
+        <td>${escapeHtml(NOTIFICATION_KIND_LABELS[notification.kind] || notification.kind)}</td>
+        <td><span class="status-pill status-${escapeAttribute(notification.delivery_mode === "live" ? "resolved" : "closed")}">${escapeHtml(notification.delivery_mode)}</span></td>
+        <td class="mono">${formatNumber(notification.actual_recipient_count)} / ${formatNumber(notification.intended_recipient_count)}</td>
+        <td>
+          <button class="notification-delivery-summary" data-view-notification-deliveries="${escapeAttribute(notification.id)}" type="button">
+            <strong>${formatNumber(notification.sent_count)} sent${notification.failed_count ? ` · ${formatNumber(notification.failed_count)} failed` : ""}</strong>
+            <small>View details</small>
+          </button>
+        </td>
+        <td class="mono">${escapeHtml(formatDateTime(notification.created_at))}</td>
+      </tr>
+    `).join("");
+
+    return `
+      ${buildAdminNotificationControlsMarkup(overview)}
       <section class="table-card notification-history-card">
         <div class="admin-table-heading">
-          <div>
-            <h2>Recent notification records</h2>
-            <p>Shadow-mode records show the audience that would have been eligible in Live mode.</p>
-          </div>
-          <div class="admin-table-heading-actions">
-            <span class="tiny-pill">${formatNumber((overview.notifications || []).length)} records</span>
-            <button class="button button-danger button-small" id="clear-notification-test-history" type="button">Clear test history</button>
-          </div>
+          <div><h2>Recent notifications</h2><p>Select a delivery summary to inspect its device attempts.</p></div>
+          <details class="admin-overflow-menu">
+            <summary class="icon-button" aria-label="History actions"><i class="fa-solid fa-ellipsis"></i></summary>
+            <div class="admin-overflow-menu-popover">
+              <button class="text-button" id="clear-notification-test-history" type="button">Clear test history</button>
+            </div>
+          </details>
         </div>
         ${recentNotifications ? `
           <div data-scrollable-table><div class="table-scroll">
             <table class="data-table notification-history-table">
-              <thead><tr><th>Notice</th><th>Type</th><th>Mode</th><th>Recipients</th><th>Push</th><th>Created</th></tr></thead>
+              <thead><tr><th>Notice</th><th>Type</th><th>Mode</th><th>Recipients</th><th>Delivery</th><th>Created</th></tr></thead>
               <tbody>${recentNotifications}</tbody>
             </table>
           </div></div>
         ` : '<div class="notification-empty"><p>No notification records yet.</p></div>'}
       </section>
+    `;
+  }
 
-      <section class="table-card notification-delivery-card">
-        <div class="admin-table-heading">
-          <div>
-            <h2>Recent delivery attempts</h2>
-            <p>An accepted push confirms the browser service received it, not that the recipient opened it.</p>
-          </div>
-        </div>
-        ${recentDeliveries ? `
-          <div data-scrollable-table><div class="table-scroll">
-            <table class="data-table notification-delivery-table">
-              <thead><tr><th>ID</th><th>Trader</th><th>Device</th><th>Status</th><th>Attempts</th><th>Detail</th></tr></thead>
-              <tbody>${recentDeliveries}</tbody>
-            </table>
-          </div></div>
-        ` : '<div class="notification-empty"><p>No push deliveries have been attempted yet.</p></div>'}
-      </section>
+  function buildAdminNotificationsMarkup(overview, notificationError = null) {
+    const notificationView = getAdminNotificationView();
+    const historyActive = notificationView === "history";
+
+    return `
+      <nav class="admin-subsection-nav" aria-label="Notification tools">
+        <a class="admin-subsection-link${historyActive ? "" : " is-active"}" href="#/admin/notifications">Test lab</a>
+        <a class="admin-subsection-link${historyActive ? " is-active" : ""}" href="#/admin/notifications/history">History</a>
+      </nav>
+      ${historyActive
+        ? buildAdminNotificationHistoryMarkup(overview, notificationError)
+        : buildAdminNotificationLabMarkup(overview, notificationError)}
     `;
   }
 
   function buildAdminInvitationMarkup(invitations, notificationOverview = null, notificationError = null) {
-    const joinedCount = invitations.filter(
-      (invitation) => invitation.registered_user_id && invitation.confirmed_at
-    ).length;
-    const awaitingCount = invitations.filter(
-      (invitation) => invitation.registered_user_id && !invitation.confirmed_at
-    ).length;
-    const availableCount = invitations.filter(
-      (invitation) => !invitation.registered_user_id
-    ).length;
+    return buildAdminPageMarkup(
+      "people",
+      invitations,
+      notificationOverview,
+      null,
+      notificationError,
+    );
+  }
 
-    const rows = invitations.map((invitation) => {
-      const isRegistered = Boolean(invitation.registered_user_id);
-      const isConfirmed = Boolean(invitation.confirmed_at);
-      const status = isConfirmed
-        ? { label: "Joined", className: "status-resolved" }
-        : isRegistered
-          ? { label: "Awaiting confirmation", className: "status-closed" }
-          : { label: "Approved", className: "status-open" };
-      const addedBy = invitation.added_by_display_name
-        || (isRegistered ? "Existing account" : "Administrator");
-      const traderName = invitation.registered_display_name
-        ? `<span class="muted">${escapeHtml(invitation.registered_display_name)}</span>`
-        : "";
+  function bindAdminPageEvents(invitations) {
+    document.querySelectorAll("[data-admin-approve-email]").forEach((button) => {
+      button.addEventListener("click", () => openApproveEmailModal(invitations));
+    });
+    document.querySelectorAll("[data-manage-member]").forEach((button) => {
+      button.addEventListener("click", () => openAdminMemberModal(button.dataset.manageMember));
+    });
+    document.querySelectorAll("[data-remove-invitation]").forEach((button) => {
+      button.addEventListener("click", () => {
+        openRemoveInvitationModal(button.dataset.removeInvitation);
+      });
+    });
+    document.querySelector("#retry-admin-button")?.addEventListener("click", renderAdmin);
+  }
 
-      return `
-        <tr>
-          <td>
-            <div class="invitation-email">
-              <strong>${escapeHtml(invitation.email)}</strong>
-              ${traderName}
-            </div>
-          </td>
-          <td><span class="status-pill ${status.className}">${status.label}</span></td>
-          <td>${escapeHtml(addedBy)}</td>
-          <td class="mono">${invitation.added_at ? escapeHtml(formatDateTime(invitation.added_at)) : "—"}</td>
-          <td>
-            ${isRegistered
-              ? '<span class="muted">Account retained</span>'
-              : `<button class="button button-ghost button-small" data-remove-invitation="${escapeAttribute(invitation.email)}" type="button">Remove</button>`}
-          </td>
-        </tr>
-      `;
-    }).join("");
+  function openApproveEmailModal(invitations = []) {
+    if (!state.profile?.is_admin) return;
 
-    return `
-      <div class="page-header">
+    openModal(`
+      <div class="modal-header">
         <div>
-          <p class="eyebrow">Administrator</p>
-          <h1>Exchange operations.</h1>
-          <p>Approve the addresses permitted to establish an imaginary financial presence.</p>
+          <p class="eyebrow">People &amp; access</p>
+          <h2>Approve an email address</h2>
+          <p>The person may register after this address is approved.</p>
         </div>
-        <div class="admin-header-actions">
-          <button class="button button-secondary" id="admin-edit-profile" type="button">Edit profile</button>
-          <button class="button button-secondary" id="admin-award-points" type="button">Adjust points</button>
-        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
       </div>
-
-      ${notificationOverview || notificationError
-        ? buildAdminNotificationLabMarkup(notificationOverview, notificationError)
-        : ""}
-
-      <div class="portfolio-grid admin-stats" aria-label="Invitation status">
-        <div class="portfolio-stat">
-          <span>Ready to register</span>
-          <strong>${formatNumber(availableCount)}</strong>
-          <small>approved addresses</small>
-        </div>
-        <div class="portfolio-stat">
-          <span>Awaiting confirmation</span>
-          <strong>${formatNumber(awaitingCount)}</strong>
-          <small>accounts created</small>
-        </div>
-        <div class="portfolio-stat">
-          <span>Joined traders</span>
-          <strong>${formatNumber(joinedCount)}</strong>
-          <small>confirmed accounts</small>
-        </div>
-      </div>
-
-      <section class="panel invitation-panel">
-        <div class="panel-heading">
-          <div>
-            <h2>Approve an email address</h2>
-            <p>The person can register after approval. Supabase sends their confirmation email when they create the account.</p>
-          </div>
-        </div>
-        <form id="approve-email-form" class="invitation-form">
+      <form id="approve-email-form">
+        <div class="modal-body">
           <div class="form-field">
             <label for="approved-email">Email address</label>
             <input id="approved-email" name="email" type="email" maxlength="254" autocomplete="off" placeholder="friend@example.com" required />
           </div>
-          <button class="button button-primary" type="submit">Approve email</button>
-        </form>
-      </section>
-
-      <section class="table-card">
-        <div class="admin-table-heading">
-          <div>
-            <h2>Invitation registry</h2>
-            <p>Registered accounts remain in the ledger and cannot be removed here.</p>
-          </div>
-          <span class="tiny-pill">${formatNumber(invitations.length)} ${pluralize(invitations.length, "record")}</span>
         </div>
-        ${invitations.length ? `
-          <div data-scrollable-table>
-            <div class="table-scroll">
-              <table class="data-table invitation-table">
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Status</th>
-                    <th>Approved by</th>
-                    <th>Approved on</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </div>
-          </div>
-        ` : `
-          <div class="empty-state compact-empty-state">
-            <div class="empty-state-icon">@</div>
-            <h2>No approved addresses yet.</h2>
-            <p>Add the first friend above before enabling invitation-only registration.</p>
-          </div>
-        `}
-      </section>
-    `;
-  }
+        <div class="modal-footer">
+          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+          <button class="button button-primary" type="submit">Approve email</button>
+        </div>
+      </form>
+    `);
 
-  function bindAdminInvitationEvents(invitations) {
-    document.querySelector("#admin-edit-profile")?.addEventListener("click", openAdminProfileModal);
-    document.querySelector("#admin-award-points")?.addEventListener("click", openAdminPointsModal);
-
-    document.querySelector("#approve-email-form")?.addEventListener("submit", async (event) => {
+    const form = document.querySelector("#approve-email-form");
+    const emailInput = document.querySelector("#approved-email");
+    emailInput?.focus();
+    form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const email = String(new FormData(event.currentTarget).get("email") || "").trim();
       const submit = event.currentTarget.querySelector("button[type='submit']");
       const wasAlreadyApproved = invitations.some(
-        (invitation) => invitation.email.toLowerCase() === email.toLowerCase()
+        (invitation) => invitation.email.toLowerCase() === email.toLowerCase(),
       );
 
       setButtonLoading(submit, true, "Approving…");
@@ -5354,20 +5469,73 @@
         return;
       }
 
+      closeModal();
       await renderAdmin();
       showToast(
         wasAlreadyApproved
-          ? `${email} is already in the invitation registry.`
+          ? `${email} is already in the approved-email registry.`
           : `${email} may now create an account.`,
         "success",
       );
     });
+  }
 
-    document.querySelectorAll("[data-remove-invitation]").forEach((button) => {
-      button.addEventListener("click", () => {
-        openRemoveInvitationModal(button.dataset.removeInvitation);
-      });
-    });
+  function openAdminMemberModal(initialUserId = "") {
+    if (!state.profile?.is_admin) return;
+
+    const sortedProfiles = [...state.profiles].sort((a, b) =>
+      a.display_name.localeCompare(b.display_name),
+    );
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">People &amp; access</p>
+          <h2>Manage member</h2>
+          <p>Choose a member, then select the change you need to make.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <label for="admin-member-user">Member</label>
+          <select id="admin-member-user">
+            <option value=""${initialUserId ? "" : " selected"}>Choose a member…</option>
+            ${sortedProfiles.map((profile) => `
+              <option value="${escapeAttribute(profile.id)}"${profile.id === initialUserId ? " selected" : ""}>${escapeHtml(profile.display_name)}</option>
+            `).join("")}
+          </select>
+        </div>
+        <div class="admin-member-modal-summary" id="admin-member-summary"></div>
+        <div class="admin-member-modal-actions">
+          <button class="button button-secondary" id="admin-member-edit-profile" type="button" disabled>Edit profile</button>
+          <button class="button button-secondary" id="admin-member-adjust-points" type="button" disabled>Adjust points</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Done</button>
+      </div>
+    `, "admin-member-modal");
+
+    const userSelect = document.querySelector("#admin-member-user");
+    const summary = document.querySelector("#admin-member-summary");
+    const editButton = document.querySelector("#admin-member-edit-profile");
+    const pointsButton = document.querySelector("#admin-member-adjust-points");
+
+    const updateMemberSummary = () => {
+      const profile = state.profiles.find((item) => item.id === userSelect.value);
+      editButton.disabled = !profile;
+      pointsButton.disabled = !profile;
+      summary.innerHTML = profile ? `
+        ${renderProfileAvatar(profile)}
+        <div><strong>${escapeHtml(profile.display_name)}</strong><small>${formatNumber(profile.balance)} points · ${profile.is_admin ? "Administrator" : "Member"}</small></div>
+      ` : '<p class="muted">Select a member to see the available actions.</p>';
+    };
+
+    userSelect?.addEventListener("change", updateMemberSummary);
+    editButton?.addEventListener("click", () => openAdminProfileModal(userSelect.value));
+    pointsButton?.addEventListener("click", () => openAdminPointsModal(userSelect.value));
+    updateMemberSummary();
+    if (!initialUserId) userSelect?.focus();
   }
 
   async function applyNotificationMode(mode, button = null) {
@@ -5409,6 +5577,109 @@
     document.querySelector("#confirm-live-notifications")?.addEventListener("click", (event) => {
       void applyNotificationMode("live", event.currentTarget || button);
     });
+  }
+
+  function openNotificationModeModal(overview) {
+    const mode = overview.mode || "off";
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Notifications</p>
+          <h2>Change delivery mode</h2>
+          <p>Choose how future market events enter the delivery system.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <form id="notification-mode-form">
+        <div class="modal-body">
+          <div class="form-field">
+            <label for="notification-delivery-mode">Delivery mode</label>
+            <select id="notification-delivery-mode" name="deliveryMode">
+              <option value="off"${mode === "off" ? " selected" : ""}>Off — create nothing</option>
+              <option value="test"${mode === "test" ? " selected" : ""}>Test — administrators only</option>
+              <option value="live"${mode === "live" ? " selected" : ""}>Live — opted-in members</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="button button-secondary" data-modal-close type="button">Cancel</button>
+          <button class="button button-primary" type="submit">Update mode</button>
+        </div>
+      </form>
+    `);
+
+    document.querySelector("#notification-mode-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedMode = String(new FormData(event.currentTarget).get("deliveryMode") || "off");
+      const button = event.currentTarget.querySelector("button[type='submit']");
+      if (selectedMode === "live" && mode !== "live") {
+        confirmLiveNotificationMode(button);
+        return;
+      }
+      await applyNotificationMode(selectedMode, button);
+    });
+  }
+
+  function openNotificationDiagnosticsModal(overview) {
+    const diagnostics = getAdminPushDiagnostics(overview);
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Notifications</p>
+          <h2>Push diagnostics</h2>
+          <p>Technical details for this browser and the current delivery setup.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="notification-diagnostic-summary">
+          <span class="status-pill ${diagnostics.needsAttention ? "status-void" : "status-resolved"}">${diagnostics.needsAttention ? "Needs attention" : "Ready"}</span>
+        </div>
+        <div class="notification-diagnostic-grid" aria-label="Current browser push diagnostics">
+          ${diagnostics.fields.map(([label, value]) => `
+            <div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+          `).join("")}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Done</button>
+      </div>
+    `, "notification-diagnostics-modal");
+  }
+
+  function openNotificationDeliveryDetailsModal(notification, deliveries) {
+    const rows = deliveries.map((delivery) => `
+      <div class="notification-delivery-detail-row">
+        <div>
+          <strong>${escapeHtml(delivery.device_label || "Removed device")}</strong>
+          <small>${escapeHtml(delivery.display_name || "Unknown trader")}</small>
+        </div>
+        <span class="status-pill status-${delivery.status === "sent" ? "resolved" : delivery.status === "failed" || delivery.status === "expired" ? "void" : "closed"}">${escapeHtml(notificationDeliveryStatus(delivery.status))}</span>
+        <div class="notification-delivery-detail-meta">
+          <span>${formatNumber(delivery.attempt_count)} ${pluralize(delivery.attempt_count, "attempt")}</span>
+          <span>${delivery.response_status ? `HTTP ${formatNumber(delivery.response_status)}` : "No response code"}</span>
+        </div>
+        ${delivery.last_error ? `<p>${escapeHtml(delivery.last_error)}</p>` : ""}
+      </div>
+    `).join("");
+
+    openModal(`
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Delivery details</p>
+          <h2>${escapeHtml(notification.title)}</h2>
+          <p>${escapeHtml(notification.body)}</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        ${rows || '<div class="notification-empty"><p>No device deliveries were created for this notification.</p></div>'}
+        <p class="fine-print notification-delivery-detail-note">An accepted push confirms the browser service received it, not that the recipient opened it.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-secondary" data-modal-close type="button">Done</button>
+      </div>
+    `, "notification-delivery-modal");
   }
 
   function openClearNotificationTestHistoryModal() {
@@ -5461,28 +5732,27 @@
     const overview = state.notificationAdminOverview;
     if (!overview) return;
 
-    document.querySelectorAll("[data-remove-push-subscription]").forEach((button) => {
+    document.querySelector("[data-change-notification-mode]")?.addEventListener("click", () => {
+      openNotificationModeModal(overview);
+    });
+    document.querySelector("[data-open-notification-diagnostics]")?.addEventListener("click", () => {
+      openNotificationDiagnosticsModal(overview);
+    });
+    document.querySelectorAll("[data-view-notification-deliveries]").forEach((button) => {
       button.addEventListener("click", () => {
-        const subscription = state.pushSubscriptions.find(
-          (item) => item.id === button.dataset.removePushSubscription,
+        const notification = (overview.notifications || []).find(
+          (item) => String(item.id) === button.dataset.viewNotificationDeliveries,
         );
-        if (subscription) openRemovePushSubscriptionModal(subscription);
+        if (!notification) return;
+        const deliveries = (overview.deliveries || []).filter(
+          (delivery) => String(delivery.notification_id) === String(notification.id),
+        );
+        openNotificationDeliveryDetailsModal(notification, deliveries);
       });
     });
 
     document.querySelector("#clear-notification-test-history")?.addEventListener("click", () => {
       openClearNotificationTestHistoryModal();
-    });
-
-    document.querySelector("#notification-mode-form")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const mode = String(new FormData(event.currentTarget).get("deliveryMode") || "off");
-      const button = event.currentTarget.querySelector("button[type='submit']");
-      if (mode === "live" && overview.mode !== "live") {
-        confirmLiveNotificationMode(button);
-        return;
-      }
-      await applyNotificationMode(mode, button);
     });
 
     const testForm = document.querySelector("#notification-test-form");
@@ -5566,7 +5836,7 @@
       <div class="modal-body">
         <p style="margin-top:0">
           This removes the device from future push delivery while preserving its past delivery history.
-          Last confirmed ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}.
+          Connected ${escapeHtml(formatRelativeDate(subscription.last_seen_at))}.
         </p>
       </div>
       <div class="modal-footer">
@@ -6447,7 +6717,7 @@
     ].join("");
   }
 
-  function openAdminProfileModal() {
+  function openAdminProfileModal(initialUserId = "") {
     if (!state.profile?.is_admin) return;
 
     const sortedProfiles = [...state.profiles].sort((a, b) =>
@@ -6469,9 +6739,9 @@
           <div class="form-field">
             <label for="admin-profile-user">Trader</label>
             <select id="admin-profile-user" name="userId" required>
-              <option value="" selected>Choose a trader…</option>
+              <option value=""${initialUserId ? "" : " selected"}>Choose a trader…</option>
               ${sortedProfiles.map((profile) => `
-                <option value="${profile.id}">${escapeHtml(profile.display_name)}</option>
+                <option value="${profile.id}"${profile.id === initialUserId ? " selected" : ""}>${escapeHtml(profile.display_name)}</option>
               `).join("")}
             </select>
           </div>
@@ -6527,7 +6797,8 @@
     nameInput.addEventListener("input", () => {
       initialsPreview.textContent = initials(nameInput.value);
     });
-    userSelect.focus();
+    populateSelectedProfile();
+    if (!initialUserId) userSelect.focus();
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -6561,7 +6832,7 @@
     });
   }
 
-  function openAdminPointsModal() {
+  function openAdminPointsModal(initialUserId = "") {
     if (!state.profile.is_admin) return;
 
     const sortedProfiles = [...state.profiles].sort((a, b) => a.display_name.localeCompare(b.display_name));
@@ -6580,9 +6851,9 @@
             <div class="form-field">
               <label for="admin-points-user">Trader</label>
               <select id="admin-points-user" name="userId" required>
-                <option value="" selected>Choose a trader…</option>
+                <option value=""${initialUserId ? "" : " selected"}>Choose a trader…</option>
                 ${sortedProfiles.map((profile) => `
-                  <option value="${profile.id}">${escapeHtml(profile.display_name)}</option>
+                  <option value="${profile.id}"${profile.id === initialUserId ? " selected" : ""}>${escapeHtml(profile.display_name)}</option>
                 `).join("")}
               </select>
             </div>
@@ -6654,7 +6925,7 @@
     userSelect.addEventListener("change", updateAdjustmentPreview);
     amountInput.addEventListener("input", updateAdjustmentPreview);
     updateAdjustmentPreview();
-    userSelect.focus();
+    if (!initialUserId) userSelect.focus();
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
