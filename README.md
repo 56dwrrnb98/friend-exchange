@@ -128,7 +128,9 @@ admin-only **Clear test history** action, followed by
 `migrations/20260901_push_subscription_device_info.sql` so enrolled-device
 icons can distinguish phones, tablets, and computers. Apply
 `migrations/20260902_notification_live_impact.sql` to add the category-specific
-member and device reach shown before enabling Live delivery.
+member and device reach shown before enabling Live delivery. Apply
+`migrations/20260902_admin_people_push_status.sql` to add the privacy-preserving
+Push readiness column to the administrator People report.
 
 ## 2. Configure notification delivery
 

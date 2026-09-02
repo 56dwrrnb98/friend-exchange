@@ -174,6 +174,8 @@
     portfolioSortDirection: "desc",
     leaderboardSortKey: "profitLoss",
     leaderboardSortDirection: "desc",
+    adminPeopleSortKey: "approved",
+    adminPeopleSortDirection: "desc",
     oddsHistoryMarketId: null,
     selectedOutcomeByMarket: new Map(),
     lastRenderedMarketOdds: new Map(),
@@ -187,6 +189,7 @@
     allowanceNoticeOpen: false,
     allowanceNoticeCurrent: null,
     pendingAllowanceNotice: null,
+    modalReturnFocusElement: null,
     authSubscription: null,
     passwordRecovery: false,
     notificationPreferences: {
@@ -556,6 +559,8 @@
     state.portfolioSortDirection = "desc";
     state.leaderboardSortKey = "profitLoss";
     state.leaderboardSortDirection = "desc";
+    state.adminPeopleSortKey = "approved";
+    state.adminPeopleSortDirection = "desc";
     state.oddsHistoryMarketId = null;
     state.selectedOutcomeByMarket = new Map();
     state.lastRenderedMarketOdds = new Map();
@@ -723,7 +728,9 @@
   }
 
   function isIosDevice() {
-    return /iPad|iPhone|iPod/.test(window.navigator?.userAgent || "");
+    const browserNavigator = window.navigator || {};
+    return /iPad|iPhone|iPod/.test(browserNavigator.userAgent || "")
+      || (browserNavigator.platform === "MacIntel" && browserNavigator.maxTouchPoints > 1);
   }
 
   function isStandaloneApp() {
@@ -769,7 +776,7 @@
 
     return {
       available: true,
-      message: "This device can receive Friend Exchange push notifications.",
+      message: "This device is ready to receive Friend Exchange push notifications.",
     };
   }
 
@@ -817,12 +824,34 @@
 
   function getDefaultDeviceLabel() {
     const userAgent = window.navigator?.userAgent || "";
-    if (/iPhone/.test(userAgent)) return "iPhone";
-    if (/iPad/.test(userAgent)) return "iPad";
-    if (/Android/.test(userAgent)) return "Android phone";
-    if (/Mac/.test(userAgent)) return "Mac";
-    if (/Windows/.test(userAgent)) return "Windows PC";
-    return "Browser device";
+    const displayName = String(state.profile?.display_name || "").trim();
+    let browserName = "";
+    let deviceName = "Browser device";
+
+    if (/EdgA|EdgiOS|Edg\//i.test(userAgent)) browserName = "Edge";
+    else if (/OPR\/|Opera/i.test(userAgent)) browserName = "Opera";
+    else if (/CriOS|Chrome/i.test(userAgent)) browserName = "Chrome";
+    else if (/FxiOS|Firefox/i.test(userAgent)) browserName = "Firefox";
+    else if (/Safari/i.test(userAgent)) browserName = "Safari";
+
+    if (/iPhone|iPod/i.test(userAgent)) deviceName = "iPhone";
+    else if (/iPad/i.test(userAgent) || isIosDevice()) deviceName = "iPad";
+    else if (/Android/i.test(userAgent) && /Mobile/i.test(userAgent)) deviceName = "Android phone";
+    else if (/Android/i.test(userAgent)) deviceName = "Android tablet";
+    else if (/Mac/i.test(userAgent)) deviceName = "Mac";
+    else if (/Windows/i.test(userAgent)) deviceName = "Windows PC";
+
+    if (displayName) {
+      const personalizedDeviceName = deviceName === "Browser device" ? "browser" : deviceName;
+      const ownerLabel = `${displayName}’s ${personalizedDeviceName}`;
+      const isAppleMobileDevice = deviceName === "iPhone" || deviceName === "iPad";
+      return browserName && !isAppleMobileDevice
+        ? `${ownerLabel} · ${browserName}`
+        : ownerLabel;
+    }
+
+    if (deviceName === "iPhone" || deviceName === "iPad") return deviceName;
+    return browserName ? `${browserName} on ${deviceName}` : deviceName;
   }
 
   function getPushDeviceIcon(subscription) {
@@ -916,15 +945,249 @@
     }
   }
 
+  function getPushHelpPlatform() {
+    const userAgent = window.navigator?.userAgent || "";
+    if (isIosDevice()) return "ios";
+    if (/Android/i.test(userAgent)) return "android";
+    return "computer";
+  }
+
+  function getPushSettingsStatus(currentSubscription) {
+    if (currentSubscription) {
+      const hasEnabledAlerts = Boolean(
+        state.notificationPreferences.new_market_push
+        || state.notificationPreferences.closing_soon_push
+        || state.notificationPreferences.resolution_push
+      );
+
+      if (!hasEnabledAlerts) {
+        return {
+          helpTone: "is-warning",
+          icon: "fa-toggle-off",
+          heading: "Device enabled, alerts off",
+          message: "This device is connected, but you haven’t selected any alert types.",
+        };
+      }
+
+      return {
+        helpTone: "is-ready",
+        icon: "fa-circle-check",
+        heading: "Enabled on this device",
+        message: "Notifications can arrive on this device when your selected market events happen.",
+      };
+    }
+
+    if (!state.notificationAvailable) {
+      return {
+        helpTone: "is-attention",
+        icon: "fa-circle-exclamation",
+        heading: "Push settings are temporarily unavailable",
+        message: "Your profile and account settings still work. Try this Push notifications section again later.",
+      };
+    }
+
+    if (isIosDevice() && !isStandaloneApp()) {
+      return {
+        helpTone: "is-attention",
+        icon: "fa-house",
+        iconBadge: "+",
+        heading: "Add The Friend Exchange to your Home Screen first",
+        message: "iPhone and iPad can receive push notifications only from the Home Screen web app.",
+      };
+    }
+
+    if (window.Notification?.permission === "denied") {
+      return {
+        helpTone: "is-attention",
+        icon: "fa-bell-slash",
+        heading: "Notifications are blocked",
+        message: "Allow notifications for The Friend Exchange in your browser or device settings, then return here.",
+      };
+    }
+
+    const capability = getPushCapability();
+    if (!capability.available) {
+      return {
+        helpTone: "is-attention",
+        icon: "fa-circle-exclamation",
+        heading: "Push notifications are not available here",
+        message: capability.message,
+      };
+    }
+
+    return {
+      helpTone: "is-neutral",
+      icon: "fa-toggle-off",
+      heading: "Ready to enable",
+      message: "This device supports push notifications. Name it below, then select Enable notifications.",
+    };
+  }
+
+  function renderPushStatusIcon(pushStatus) {
+    return `
+      <span class="push-status-icon" aria-hidden="true">
+        <i class="fa-solid ${pushStatus.icon}"></i>
+        ${pushStatus.iconBadge ? `<span class="push-status-icon-badge">${escapeHtml(pushStatus.iconBadge)}</span>` : ""}
+      </span>
+    `;
+  }
+
+  function buildPushNotificationHelpMarkup(currentSubscription) {
+    const platform = getPushHelpPlatform();
+    const pushStatus = getPushSettingsStatus(currentSubscription);
+    const openPlatform = (name) => platform === name ? " open" : "";
+
+    return `
+      <div class="modal-header">
+        <div>
+          <h2 id="push-notification-help-title">How push notifications work</h2>
+          <p>Set up each phone, tablet, or browser separately. Your alert choices apply to every device you enable.</p>
+        </div>
+        <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body push-notification-help-body">
+        <div class="push-help-status ${pushStatus.helpTone}">
+          ${renderPushStatusIcon(pushStatus)}
+          <div>
+            <strong>${escapeHtml(pushStatus.heading)}</strong>
+            <p>${escapeHtml(pushStatus.message)}</p>
+          </div>
+        </div>
+
+        <section class="push-help-section" aria-labelledby="push-help-setup-heading">
+          <h3 id="push-help-setup-heading">How setup works</h3>
+          <ol class="push-help-steps">
+            <li><span>Give this device a name you’ll recognize.</span></li>
+            <li><span>Select <strong>Enable notifications</strong>.</span></li>
+            <li><span>Choose <strong>Allow</strong> when your device asks for permission.</span></li>
+          </ol>
+          <p>Once enabled, notifications can arrive even when The Friend Exchange isn’t open. Select one to open the related market.</p>
+        </section>
+
+        <section class="push-help-section" aria-labelledby="push-help-alerts-heading">
+          <h3 id="push-help-alerts-heading">Your alert choices</h3>
+          <div class="push-help-alerts">
+            <div>
+              <strong>New markets</strong>
+              <p>When another trader lists a market.</p>
+            </div>
+            <div>
+              <strong>Closing soon</strong>
+              <p>One reminder—24 hours before longer markets and 1 hour before shorter ones.</p>
+            </div>
+            <div>
+              <strong>Resolutions</strong>
+              <p>When a market is resolved or voided.</p>
+            </div>
+          </div>
+          <p>These choices apply to all your enabled devices. Turn off an alert and save your preferences to stop that type of notification everywhere.</p>
+        </section>
+
+        <section class="push-help-section" aria-labelledby="push-help-device-heading">
+          <h3 id="push-help-device-heading">Device instructions</h3>
+          <div class="push-help-platforms">
+            <details${openPlatform("ios")}>
+              <summary><span><i class="fa-brands fa-apple" aria-hidden="true"></i>iPhone &amp; iPad</span></summary>
+              <div class="push-help-platform-copy">
+                <p>Push notifications require iOS or iPadOS 16.4 or later, and The Friend Exchange must be added to your Home Screen.</p>
+                <ol>
+                  <li>Open The Friend Exchange in Safari.</li>
+                  <li>Tap Share, then <strong>Add to Home Screen</strong>.</li>
+                  <li>Turn on <strong>Open as Web App</strong>, then tap <strong>Add</strong>.</li>
+                  <li>Open The Friend Exchange from its new Home Screen icon.</li>
+                  <li>In The Friend Exchange, open Settings → Push notifications. Name this device, select <strong>Enable notifications</strong>, and choose <strong>Allow</strong>.</li>
+                </ol>
+                <div class="push-help-fix">
+                  <strong>If notifications are blocked</strong>
+                  <p>Open the Settings app on your iPhone or iPad, then go to Notifications → The Friend Exchange and turn on Allow Notifications.</p>
+                </div>
+              </div>
+            </details>
+
+            <details${openPlatform("android")}>
+              <summary><span><i class="fa-brands fa-android" aria-hidden="true"></i>Android</span></summary>
+              <div class="push-help-platform-copy">
+                <ol>
+                  <li>Open The Friend Exchange in your browser.</li>
+                  <li>In The Friend Exchange, open Settings → Push notifications.</li>
+                  <li>Name this device and select <strong>Enable notifications</strong>.</li>
+                  <li>Choose <strong>Allow</strong> when your browser asks.</li>
+                </ol>
+                <p>You do not need to add The Friend Exchange to your Home Screen.</p>
+                <div class="push-help-fix">
+                  <strong>If notifications are blocked in Chrome</strong>
+                  <p>Open The Friend Exchange, tap the site-information icon beside the address bar, then Permissions → Notifications → Allow.</p>
+                </div>
+              </div>
+            </details>
+
+            <details${openPlatform("computer")}>
+              <summary><span><i class="fa-solid fa-laptop" aria-hidden="true"></i>Computer</span></summary>
+              <div class="push-help-platform-copy">
+                <p>Mac and Windows use the same setup:</p>
+                <ol>
+                  <li>Open The Friend Exchange in a supported browser.</li>
+                  <li>In The Friend Exchange, open Settings → Push notifications.</li>
+                  <li>Name this computer and select <strong>Enable notifications</strong>.</li>
+                  <li>Choose <strong>Allow</strong> when your browser asks.</li>
+                </ol>
+                <p>Use a regular browser window—not a private or incognito window.</p>
+                <div class="push-help-fix">
+                  <strong>If notifications are blocked</strong>
+                  <p><strong>Chrome or Edge:</strong> Select the site-information icon beside the address bar, find Notifications, and choose Allow. Then reload the page.</p>
+                  <p><strong>Safari on Mac:</strong> Open Safari → Settings → Websites → Notifications, find The Friend Exchange, and choose Allow.</p>
+                  <p><strong>Mac:</strong> If needed, also open Mac System Settings → Notifications and allow The Friend Exchange.</p>
+                  <p><strong>Windows:</strong> Open Windows Settings → System → Notifications and make sure notifications are enabled for your browser.</p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <aside class="push-help-note">
+          <i class="fa-solid fa-lock" aria-hidden="true"></i>
+          <div>
+            <strong>A few things to know</strong>
+            <p>Notification previews may show market details on your lock screen. You can hide previews or silence alerts in your device’s system notification and Focus settings.</p>
+            <p>Signing out disables notifications in the browser or device you signed out of. Your other enabled devices remain connected.</p>
+          </div>
+        </aside>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-primary" id="push-notification-help-back" type="button">Back to device setup</button>
+      </div>
+    `;
+  }
+
+  function openPushNotificationHelpModal(currentSubscription) {
+    openModal(buildPushNotificationHelpMarkup(currentSubscription), "push-notification-help-modal");
+    document.querySelector(".push-notification-help-modal")?.setAttribute(
+      "aria-labelledby",
+      "push-notification-help-title",
+    );
+    document.querySelector("#push-notification-help-back")?.addEventListener("click", () => {
+      const deviceNameField = document.querySelector("#notification-device-label");
+      const returnFocusElement = deviceNameField && !deviceNameField.disabled
+        ? deviceNameField
+        : document.querySelector("#push-notification-help");
+      closeModal({ returnFocusElement });
+    });
+  }
+
   function buildSettingsMarkup(currentSubscription) {
     const capability = getPushCapability();
     const preferences = state.notificationPreferences;
     const pushActive = Boolean(currentSubscription);
-    const pushStatusLabel = pushActive ? "Device enabled" : "Not set up";
-    const pushStatusTone = pushActive ? "status-resolved" : "status-closed";
+    const pushStatus = getPushSettingsStatus(currentSubscription);
     const currentDevice = state.pushSubscriptions.find(
       (subscription) => subscription.endpoint === currentSubscription?.endpoint,
     );
+    const activePushDeviceCount = state.pushSubscriptions.length;
+    const pushAlertScopeMessage = activePushDeviceCount === 0
+      ? "These choices will apply when you enable a device."
+      : activePushDeviceCount === 1
+        ? "These choices apply to your enabled device."
+        : `These choices apply to all ${formatNumber(activePushDeviceCount)} enabled devices.`;
     const notificationControlsAvailable = state.notificationAvailable;
     const deviceControlsAvailable = notificationControlsAvailable && (pushActive || capability.available);
     const profileIconChoices = buildProfileIconChoices(state.profile);
@@ -1012,56 +1275,75 @@
               <div>
                 <h2>Push notifications</h2>
               </div>
-              <span class="status-pill settings-push-status-desktop ${pushStatusTone}">
-                ${pushStatusLabel}
-              </span>
+              <button class="settings-push-help" id="push-notification-help" type="button" aria-label="How push notifications work" title="How push notifications work">
+                <i class="fa-regular fa-circle-question settings-push-help-icon" aria-hidden="true"></i>
+              </button>
             </div>
 
-            <div class="push-capability-note${notificationControlsAvailable && (pushActive || capability.available) ? "" : " is-warning"}">
-              ${escapeHtml(!notificationControlsAvailable
-                ? "Push settings are temporarily unavailable. Your profile and account settings still work."
-                : pushActive
-                  ? "This browser is enrolled for push delivery."
-                  : capability.message)}
-            </div>
+            <section class="notification-settings-section" aria-labelledby="settings-device-setup-heading">
+              <div class="notification-settings-section-heading">
+                <h3 id="settings-device-setup-heading">Set up this device</h3>
+              </div>
 
-            <div class="settings-device-enrollment">
-              <div class="form-field">
-                <div class="settings-device-label-row">
-                  <label for="notification-device-label">This device’s name</label>
-                  <span class="status-pill settings-push-status-mobile ${pushStatusTone}">${pushStatusLabel}</span>
+              <div class="settings-push-status-summary ${pushStatus.helpTone}">
+                ${renderPushStatusIcon(pushStatus)}
+                <div>
+                  <strong>${escapeHtml(pushStatus.heading)}</strong>
+                  <p>${escapeHtml(pushStatus.message)}</p>
                 </div>
+              </div>
+
+              <div class="settings-device-field">
+                <div class="settings-device-field-copy">
+                  <label for="notification-device-label">Device name</label>
+                  <small id="notification-device-label-help">Helps you recognize this browser under Your push devices.</small>
+                </div>
+                <div class="settings-device-enrollment">
                 <input
                   id="notification-device-label"
                   name="deviceLabel"
+                  minlength="2"
                   maxlength="80"
                   value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
+                  aria-describedby="notification-device-label-help"
+                  required
                   ${deviceControlsAvailable ? "" : "disabled"}
                 />
+                  <div class="settings-device-actions">
+                    ${pushActive ? '<button class="button button-secondary" id="save-push-device-name" type="button" disabled>Save name</button>' : ""}
+                    <button class="button ${pushActive ? "button-ghost" : "button-secondary"}" id="toggle-push-device" type="button" ${
+                      deviceControlsAvailable ? "" : "disabled"
+                    }>${pushActive ? "Disable on this device" : "Enable notifications"}</button>
+                  </div>
+                </div>
               </div>
-              <button class="button button-secondary" id="toggle-push-device" type="button" ${
-                deviceControlsAvailable ? "" : "disabled"
-              }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
-            </div>
+            </section>
 
-            <div class="notification-preference-grid">
-              <label class="notification-preference">
-                <input type="checkbox" name="newMarket" ${preferences.new_market_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
-                <span><strong>New markets</strong><small>When a new market is listed.</small></span>
-              </label>
-              <label class="notification-preference">
-                <input type="checkbox" name="closingSoon" ${preferences.closing_soon_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
-                <span><strong>Closing soon</strong><small>One reminder before scheduled predictions close.</small></span>
-              </label>
-              <label class="notification-preference">
-                <input type="checkbox" name="resolution" ${preferences.resolution_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
-                <span><strong>Resolutions</strong><small>When a market resolves or is voided.</small></span>
-              </label>
-            </div>
+            <section class="notification-settings-section" aria-labelledby="settings-alert-choices-heading">
+              <div class="notification-settings-section-heading">
+                <h3 id="settings-alert-choices-heading">Choose your alerts</h3>
+                <p id="settings-alert-choices-help">${escapeHtml(pushAlertScopeMessage)}</p>
+              </div>
 
-            <div class="notification-settings-actions">
-              <button class="button button-primary" type="submit" ${notificationControlsAvailable ? "" : "disabled"}>Save preferences</button>
-            </div>
+              <div class="notification-preference-grid" aria-describedby="settings-alert-choices-help">
+                <label class="notification-preference">
+                  <input type="checkbox" name="newMarket" ${preferences.new_market_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                  <span><strong>New markets</strong><small>When a new market is listed.</small></span>
+                </label>
+                <label class="notification-preference">
+                  <input type="checkbox" name="closingSoon" ${preferences.closing_soon_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                  <span><strong>Closing soon</strong><small>One reminder before scheduled predictions close.</small></span>
+                </label>
+                <label class="notification-preference">
+                  <input type="checkbox" name="resolution" ${preferences.resolution_push ? "checked" : ""} ${notificationControlsAvailable ? "" : "disabled"} />
+                  <span><strong>Resolutions</strong><small>When a market resolves or is voided.</small></span>
+                </label>
+              </div>
+
+              <div class="notification-settings-actions">
+                <button class="button button-primary" id="save-notification-preferences" type="submit" disabled>Save alert choices</button>
+              </div>
+            </section>
           </form>
 
           <section class="panel settings-card settings-devices-card">
@@ -1120,6 +1402,69 @@
       if (initialsPreview) initialsPreview.textContent = initials(profileNameInput.value);
     });
 
+    document.querySelector("#push-notification-help")?.addEventListener("click", () => {
+      openPushNotificationHelpModal(currentSubscription);
+    });
+
+    const notificationPreferencesForm = document.querySelector("#notification-preferences-form");
+    const notificationPreferencesSave = document.querySelector("#save-notification-preferences");
+    const notificationPreferenceInputs = notificationPreferencesForm
+      ? [...notificationPreferencesForm.querySelectorAll(".notification-preference input")]
+      : [];
+    const updateNotificationSaveState = () => {
+      if (!notificationPreferencesSave || !notificationPreferencesForm) return;
+      const form = new FormData(notificationPreferencesForm);
+      const preferencesChanged = (
+        (form.get("newMarket") === "on") !== Boolean(state.notificationPreferences.new_market_push)
+        || (form.get("closingSoon") === "on") !== Boolean(state.notificationPreferences.closing_soon_push)
+        || (form.get("resolution") === "on") !== Boolean(state.notificationPreferences.resolution_push)
+      );
+      notificationPreferencesSave.disabled = !state.notificationAvailable || !preferencesChanged;
+    };
+    notificationPreferenceInputs.forEach((input) => {
+      input.addEventListener("change", updateNotificationSaveState);
+    });
+
+    const deviceNameInput = document.querySelector("#notification-device-label");
+    if (currentSubscription && deviceNameInput) {
+      const currentDevice = state.pushSubscriptions.find(
+        (subscription) => subscription.endpoint === currentSubscription.endpoint,
+      );
+      let savedDeviceName = String(currentDevice?.device_label || getDefaultDeviceLabel()).trim();
+      const saveDeviceNameButton = document.querySelector("#save-push-device-name");
+      const updateDeviceNameSaveState = () => {
+        const deviceName = String(deviceNameInput.value || "").trim();
+        if (saveDeviceNameButton) {
+          saveDeviceNameButton.disabled = deviceName === savedDeviceName
+            || deviceName.length < 2
+            || deviceName.length > 80;
+        }
+      };
+      deviceNameInput.addEventListener("input", updateDeviceNameSaveState);
+      saveDeviceNameButton?.addEventListener("click", async () => {
+        const deviceName = String(deviceNameInput.value || "").trim();
+        if (deviceName.length < 2 || deviceName.length > 80) {
+          showToast("Use a device name between 2 and 80 characters.", "error");
+          deviceNameInput.focus();
+          return;
+        }
+        if (deviceName === savedDeviceName) return;
+
+        setButtonLoading(saveDeviceNameButton, true, "Saving…");
+        try {
+          await registerCurrentPushSubscription(deviceName);
+          savedDeviceName = deviceName;
+          deviceNameInput.value = deviceName;
+          showToast("Device name saved.", "success");
+        } catch (error) {
+          showToast(error.message || "The device name could not be updated.", "error");
+        } finally {
+          setButtonLoading(saveDeviceNameButton, false);
+          updateDeviceNameSaveState();
+        }
+      });
+    }
+
     document.querySelector("#settings-profile-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -1150,7 +1495,13 @@
 
     document.querySelector("#toggle-push-device")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      const deviceLabel = document.querySelector("#notification-device-label")?.value;
+      const deviceLabelInput = document.querySelector("#notification-device-label");
+      const deviceLabel = String(deviceLabelInput?.value || "").trim();
+      if (!currentSubscription && (deviceLabel.length < 2 || deviceLabel.length > 80)) {
+        showToast("Use a device name between 2 and 80 characters.", "error");
+        deviceLabelInput?.focus();
+        return;
+      }
       setButtonLoading(button, true, currentSubscription ? "Disabling…" : "Enabling…");
       try {
         if (currentSubscription) {
@@ -1158,7 +1509,7 @@
           showToast("Push notifications disabled on this device.", "success");
         } else {
           await registerCurrentPushSubscription(deviceLabel);
-          showToast("This device is ready for push notifications.", "success");
+          showToast("Notifications enabled on this device.", "success");
         }
         await renderSettings();
       } catch (error) {
@@ -1167,7 +1518,7 @@
       }
     });
 
-    document.querySelector("#notification-preferences-form")?.addEventListener("submit", async (event) => {
+    notificationPreferencesForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const button = event.currentTarget.querySelector("button[type='submit']");
@@ -1184,17 +1535,8 @@
         return;
       }
 
-      if (currentSubscription) {
-        const deviceLabel = document.querySelector("#notification-device-label")?.value;
-        try {
-          await registerCurrentPushSubscription(deviceLabel);
-        } catch (subscriptionError) {
-          showToast(subscriptionError.message || "The device name could not be updated.", "error");
-        }
-      }
-
       await refreshNotificationData();
-      showToast("Notification preferences updated.", "success");
+      showToast("Alert choices saved.", "success");
       await renderSettings();
     });
 
@@ -5096,19 +5438,84 @@
       <div class="admin-people-actions" role="group" aria-label="People actions">
         <button class="admin-people-action" data-admin-approve-email type="button">
           <span class="admin-people-action-icon"><i class="fa-solid fa-envelope-circle-check" aria-hidden="true"></i></span>
-          <span><strong>Approve email</strong><small>Let someone join the exchange</small></span>
+          <span class="admin-people-action-copy"><strong>Approve email</strong><small>Let someone join the exchange</small></span>
+          <i class="fa-solid fa-arrow-right admin-people-action-arrow" aria-hidden="true"></i>
         </button>
         <button class="admin-people-action" data-admin-adjust-points type="button">
           <span class="admin-people-action-icon"><i class="fa-solid fa-coins" aria-hidden="true"></i></span>
-          <span><strong>Adjust points</strong><small>Add or subtract a member's points</small></span>
+          <span class="admin-people-action-copy"><strong>Adjust points</strong><small>Add or subtract a member's points</small></span>
+          <i class="fa-solid fa-arrow-right admin-people-action-arrow" aria-hidden="true"></i>
         </button>
         <button class="admin-people-action" data-admin-edit-profile type="button">
           <span class="admin-people-action-icon"><i class="fa-solid fa-user-pen" aria-hidden="true"></i></span>
-          <span><strong>Edit profile</strong><small>Change a member's name or icon</small></span>
+          <span class="admin-people-action-copy"><strong>Edit profile</strong><small>Change a member's name or icon</small></span>
+          <i class="fa-solid fa-arrow-right admin-people-action-arrow" aria-hidden="true"></i>
         </button>
       </div>
       ${buildAdminInvitationRegistryMarkup(invitations, invitationError)}
     `;
+  }
+
+  function getAdminPeopleSortValue(invitation, key) {
+    const isRegistered = Boolean(invitation.registered_user_id);
+    const isConfirmed = Boolean(invitation.confirmed_at);
+    const profile = isRegistered
+      ? state.profiles.find((item) => item.id === invitation.registered_user_id)
+      : null;
+
+    if (key === "name") {
+      return String(
+        profile?.display_name || invitation.registered_display_name || invitation.email || "",
+      ).toLocaleLowerCase();
+    }
+    if (key === "status") {
+      if (isConfirmed) return 0;
+      if (isRegistered) return 1;
+      return 2;
+    }
+    if (key === "push") {
+      if (!isConfirmed) return null;
+      return { ready: 0, off: 1, not_set_up: 2 }[invitation.push_notification_status] ?? null;
+    }
+    if (key === "points") {
+      return isConfirmed && profile ? Number(profile.balance) : null;
+    }
+    if (key === "joined") {
+      const joinedAt = invitation.confirmed_at
+        ? new Date(invitation.confirmed_at).getTime()
+        : Number.NaN;
+      return Number.isFinite(joinedAt) ? joinedAt : null;
+    }
+
+    const approvedAt = invitation.added_at
+      ? new Date(invitation.added_at).getTime()
+      : Number.NaN;
+    return Number.isFinite(approvedAt) ? approvedAt : null;
+  }
+
+  function sortAdminPeople(invitations) {
+    const key = state.adminPeopleSortKey || "approved";
+    const direction = state.adminPeopleSortDirection === "asc" ? "asc" : "desc";
+
+    return [...invitations].sort((a, b) => {
+      const aValue = getAdminPeopleSortValue(a, key);
+      const bValue = getAdminPeopleSortValue(b, key);
+      const aMissing = aValue === null || aValue === "";
+      const bMissing = bValue === null || bValue === "";
+      if (aMissing !== bMissing) return aMissing ? 1 : -1;
+
+      let comparison = 0;
+      if (!aMissing && !bMissing) {
+        comparison = typeof aValue === "string"
+          ? aValue.localeCompare(bValue)
+          : aValue - bValue;
+      }
+      if (comparison) return direction === "asc" ? comparison : -comparison;
+
+      const aName = String(a.registered_display_name || a.email || "");
+      const bName = String(b.registered_display_name || b.email || "");
+      return aName.localeCompare(bName);
+    });
   }
 
   function buildAdminInvitationRegistryMarkup(invitations, invitationError = null) {
@@ -5126,18 +5533,25 @@
       `;
     }
 
-    const sortedInvitations = [...invitations].sort((a, b) => {
-      const statusRank = (invitation) => {
-        if (invitation.registered_user_id && !invitation.confirmed_at) return 0;
-        if (!invitation.registered_user_id) return 1;
-        return 2;
-      };
-      const rankDifference = statusRank(a) - statusRank(b);
-      if (rankDifference) return rankDifference;
-      const aName = a.registered_display_name || a.email;
-      const bName = b.registered_display_name || b.email;
-      return aName.localeCompare(bName);
-    });
+    const sortedInvitations = sortAdminPeople(invitations);
+    const sortableHeader = (key, label, className = "") => {
+      const isActive = state.adminPeopleSortKey === key;
+      const ariaSort = isActive
+        ? state.adminPeopleSortDirection === "asc" ? "ascending" : "descending"
+        : "none";
+      const indicator = isActive
+        ? state.adminPeopleSortDirection === "asc" ? "↑" : "↓"
+        : "↕";
+
+      return `
+        <th${className ? ` class="${className}"` : ""} aria-sort="${ariaSort}">
+          <button class="table-sort-button" type="button" data-admin-people-sort="${key}">
+            <span>${label}</span>
+            <span class="sort-indicator" aria-hidden="true">${indicator}</span>
+          </button>
+        </th>
+      `;
+    };
     const rows = sortedInvitations.map((invitation) => {
       const isRegistered = Boolean(invitation.registered_user_id);
       const isConfirmed = Boolean(invitation.confirmed_at);
@@ -5160,6 +5574,18 @@
         : isRegistered
           ? '<span class="avatar admin-pending-avatar" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></span>'
           : '<span class="avatar admin-approved-avatar" aria-hidden="true">@</span>';
+      const activePushDeviceCount = Number(invitation.active_push_device_count) || 0;
+      const pushStatus = isConfirmed && ["ready", "off", "not_set_up"].includes(
+        invitation.push_notification_status,
+      ) ? invitation.push_notification_status : null;
+      const pushStatusDetails = {
+        ready: { label: "Ready", className: "is-ready" },
+        off: { label: "Off", className: "is-off" },
+        not_set_up: { label: "Not set up", className: "is-not-set-up" },
+      };
+      const pushStatusMarkup = pushStatus
+        ? `<span class="admin-push-status ${pushStatusDetails[pushStatus].className}" title="${activePushDeviceCount ? `${formatNumber(activePushDeviceCount)} active push ${pluralize(activePushDeviceCount, "device")}` : "No active push devices"}"><span aria-hidden="true"></span>${pushStatusDetails[pushStatus].label}</span>`
+        : '<span class="mono admin-push-unavailable" aria-label="Push status not applicable">—</span>';
       const rowActions = isConfirmed
         ? `
           <button class="admin-row-action" data-adjust-member-points="${escapeAttribute(invitation.registered_user_id)}" type="button">Adjust points</button>
@@ -5174,6 +5600,7 @@
           <td class="admin-person-icon-cell">${avatar}</td>
           <td><div class="invitation-email"><strong>${escapeHtml(invitation.email)}</strong>${traderName}</div></td>
           <td><span class="status-pill ${status.className}">${status.label}</span></td>
+          <td class="admin-person-push-cell">${pushStatusMarkup}</td>
           <td class="mono admin-person-points-cell">${isConfirmed && profile ? formatNumber(profile.balance) : "—"}</td>
           <td class="mono">${invitation.added_at ? escapeHtml(formatDateTime(invitation.added_at)) : "—"}</td>
           <td class="mono">${isConfirmed ? escapeHtml(formatDateTime(invitation.confirmed_at)) : "—"}</td>
@@ -5195,7 +5622,7 @@
           <div data-scrollable-table><div class="table-scroll">
             <table class="data-table invitation-table admin-people-table">
               <caption class="visually-hidden">People</caption>
-              <thead><tr><th><span class="visually-hidden">Icon</span></th><th>Email / name</th><th>Status</th><th class="admin-person-points-heading">Points</th><th>Approved on</th><th>Joined on</th><th>Action</th></tr></thead>
+              <thead><tr><th><span class="visually-hidden">Icon</span></th>${sortableHeader("name", "Email / name")}${sortableHeader("status", "Status")}${sortableHeader("push", "Push")}${sortableHeader("points", "Points", "admin-person-points-heading")}${sortableHeader("approved", "Approved on")}${sortableHeader("joined", "Joined on")}<th>Action</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div></div>
@@ -5324,12 +5751,15 @@
     return `
       <section class="panel notification-mode-card">
         <div class="notification-mode-header">
-          <div>
-            <div class="notification-mode-title">
-              <h2>Automatic notifications</h2>
-              <span class="status-pill notification-mode-status ${currentMode.className}">${currentMode.label}</span>
+          <div class="notification-section-heading">
+            <span class="notification-section-icon"><i class="fa-solid fa-bolt" aria-hidden="true"></i></span>
+            <div>
+              <div class="notification-mode-title">
+                <h2>Automatic notifications</h2>
+                <span class="status-pill notification-mode-status ${currentMode.className}">${currentMode.label}</span>
+              </div>
+              <p>This controls automatic market alerts. Manual tests remain available below.</p>
             </div>
-            <p>This controls automatic market alerts. Manual tests remain available below.</p>
           </div>
         </div>
         <form class="notification-mode-form" id="notification-mode-form" data-current-mode="${escapeAttribute(mode)}">
@@ -5432,9 +5862,12 @@
     return `
       <section class="panel notification-lab-panel${isOpen ? " is-open" : ""}">
         <button class="notification-lab-heading notification-lab-toggle" id="notification-lab-toggle" type="button" aria-expanded="${isOpen}" aria-controls="notification-lab-content">
-          <span class="notification-lab-heading-copy">
-            <span class="notification-lab-title" role="heading" aria-level="2">Test lab</span>
-            <span class="notification-lab-description">Tests are enforced as administrator-to-self. Production wording remains fixed.</span>
+          <span class="notification-section-heading">
+            <span class="notification-section-icon"><i class="fa-solid fa-flask" aria-hidden="true"></i></span>
+            <span class="notification-lab-heading-copy">
+              <span class="notification-lab-title" role="heading" aria-level="2">Test lab</span>
+              <span class="notification-lab-description">Tests are enforced as administrator-to-self. Production wording remains fixed.</span>
+            </span>
           </span>
           <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
         </button>
@@ -5554,7 +5987,10 @@
     return `
       <section class="table-card notification-history-card">
         <div class="admin-table-heading">
-          <div><h2>Notification history</h2><p>Select a delivery summary to inspect its device attempts.</p></div>
+          <div class="notification-section-heading">
+            <span class="notification-section-icon"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></span>
+            <div><h2>Notification history</h2><p>Select a delivery summary to inspect its device attempts.</p></div>
+          </div>
           <details class="admin-overflow-menu">
             <summary class="icon-button" aria-label="History actions"><i class="fa-solid fa-ellipsis"></i></summary>
             <div class="admin-overflow-menu-popover">
@@ -5640,6 +6076,28 @@
       button.addEventListener("click", () => {
         button.closest("details")?.removeAttribute("open");
         openRemoveInvitationModal(button.dataset.removeInvitation);
+      });
+    });
+    document.querySelectorAll("[data-admin-people-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextKey = button.dataset.adminPeopleSort;
+        if (state.adminPeopleSortKey === nextKey) {
+          state.adminPeopleSortDirection = state.adminPeopleSortDirection === "desc"
+            ? "asc"
+            : "desc";
+        } else {
+          state.adminPeopleSortKey = nextKey;
+          state.adminPeopleSortDirection = ["name", "status", "push"].includes(nextKey)
+            ? "asc"
+            : "desc";
+        }
+        dom.main.innerHTML = buildAdminPageMarkup(
+          "people",
+          invitations,
+          state.notificationAdminOverview,
+        );
+        bindAdminPageEvents(invitations);
+        setupScrollableTableFades();
       });
     });
     document.querySelector("#retry-admin-button")?.addEventListener("click", renderAdmin);
@@ -7320,6 +7778,7 @@
   }
 
   function openModal(content, modalClass = "") {
+    state.modalReturnFocusElement = document.activeElement || null;
     dom.modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation">
         <section class="modal${modalClass ? ` ${escapeAttribute(modalClass)}` : ""}" role="dialog" aria-modal="true">
@@ -7328,14 +7787,17 @@
       </div>
     `;
     document.body.classList.add("modal-open");
+    window.setTimeout(() => dom.modalRoot.querySelector(".modal-close")?.focus(), 0);
   }
 
-  function closeModal({ acknowledgeAllowance = true } = {}) {
+  function closeModal({ acknowledgeAllowance = true, returnFocusElement = null } = {}) {
     const allowanceNotice = state.allowanceNoticeOpen
       ? state.allowanceNoticeCurrent
       : null;
+    const focusAfterClose = returnFocusElement || state.modalReturnFocusElement;
     state.allowanceNoticeOpen = false;
     state.allowanceNoticeCurrent = null;
+    state.modalReturnFocusElement = null;
     dom.modalRoot.innerHTML = "";
     document.body.classList.remove("modal-open");
 
@@ -7347,7 +7809,10 @@
 
     if (state.pendingAllowanceNotice) {
       window.setTimeout(showPendingAllowanceNotice, 0);
+      return;
     }
+
+    window.setTimeout(() => focusAfterClose?.focus?.(), 0);
   }
 
   function statusPill(status) {

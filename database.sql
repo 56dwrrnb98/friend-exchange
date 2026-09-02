@@ -1508,7 +1508,9 @@ returns table (
   registered_user_id uuid,
   registered_at timestamptz,
   registered_display_name text,
-  confirmed_at timestamptz
+  confirmed_at timestamptz,
+  active_push_device_count integer,
+  push_notification_status text
 )
 language plpgsql
 security definer
@@ -1539,7 +1541,17 @@ begin
     invitation.registered_user_id,
     invitation.registered_at,
     registered_profile.display_name,
-    auth_user.email_confirmed_at
+    auth_user.email_confirmed_at,
+    coalesce(push_device.active_device_count, 0),
+    case
+      when invitation.registered_user_id is null
+        or auth_user.email_confirmed_at is null then null
+      when coalesce(push_device.active_device_count, 0) = 0 then 'not_set_up'
+      when coalesce(preference.new_market_push, false)
+        or coalesce(preference.closing_soon_push, false)
+        or coalesce(preference.resolution_push, false) then 'ready'
+      else 'off'
+    end
   from public.approved_signup_emails as invitation
   left join public.profiles as added_by
     on added_by.id = invitation.added_by
@@ -1547,6 +1559,14 @@ begin
     on registered_profile.id = invitation.registered_user_id
   left join auth.users as auth_user
     on auth_user.id = invitation.registered_user_id
+  left join public.notification_preferences as preference
+    on preference.user_id = invitation.registered_user_id
+  left join lateral (
+    select count(*)::integer as active_device_count
+    from public.push_subscriptions as subscription
+    where subscription.user_id = invitation.registered_user_id
+      and subscription.disabled_at is null
+  ) as push_device on true
   order by invitation.added_at desc, invitation.email;
 end;
 $$;
