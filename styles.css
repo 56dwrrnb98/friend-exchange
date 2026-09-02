@@ -3061,8 +3061,6 @@ a.exchange-activity-item:focus-visible {
 
 .settings-account-actions {
   justify-content: space-between;
-  padding-top: 0;
-  border-top: 0;
 }
 
 .settings-device-list {
@@ -3119,6 +3117,33 @@ a.exchange-activity-item:focus-visible {
 
 .notification-settings-heading > .status-pill {
   align-self: center;
+}
+
+.settings-push-status-mobile {
+  display: none;
+}
+
+.settings-device-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.form-field .settings-device-label-row label {
+  margin-bottom: 0;
+}
+
+.settings-device-enrollment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.settings-device-enrollment > .button {
+  min-height: 48px;
 }
 
 .push-capability-note {
@@ -3973,6 +3998,22 @@ a.exchange-activity-item:focus-visible {
   .settings-card-heading > .tiny-pill {
     width: fit-content;
     grid-column: 2;
+  }
+
+  .settings-push-status-desktop {
+    display: none;
+  }
+
+  .settings-push-status-mobile {
+    display: inline-flex;
+  }
+
+  .settings-device-enrollment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-device-enrollment > .button {
+    width: 100%;
   }
 
   .settings-profile-card .profile-icon-grid {

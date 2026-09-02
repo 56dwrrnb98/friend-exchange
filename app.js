@@ -860,6 +860,8 @@
     const capability = getPushCapability();
     const preferences = state.notificationPreferences;
     const pushActive = Boolean(currentSubscription);
+    const pushStatusLabel = pushActive ? "Device enabled" : "Not set up";
+    const pushStatusTone = pushActive ? "status-resolved" : "status-closed";
     const currentDevice = state.pushSubscriptions.find(
       (subscription) => subscription.endpoint === currentSubscription?.endpoint,
     );
@@ -882,7 +884,7 @@
           </span>
           ${isCurrentDevice
             ? '<span class="tiny-pill notification-device-current">This device</span>'
-            : `<button class="text-button notification-device-remove" type="button" data-remove-settings-push-subscription="${escapeAttribute(subscription.id)}">Remove stale device</button>`}
+            : `<button class="text-button notification-device-remove" type="button" data-remove-settings-push-subscription="${escapeAttribute(subscription.id)}">Remove device</button>`}
         </div>
       `;
     }).join("");
@@ -936,7 +938,7 @@
               <strong>${escapeHtml(state.user?.email || "Unavailable")}</strong>
             </div>
             <div class="settings-card-actions settings-account-actions">
-              <button class="button button-secondary" id="settings-reset-password" type="button">Send password-reset email</button>
+              <button class="button button-secondary" id="settings-reset-password" type="button">Reset password</button>
               <button class="button button-ghost" id="settings-sign-out" type="button">Sign out</button>
             </div>
           </section>
@@ -949,8 +951,8 @@
               <div>
                 <h2>Push notifications</h2>
               </div>
-              <span class="status-pill ${pushActive ? "status-resolved" : "status-closed"}">
-                ${pushActive ? "Device enabled" : "Device disabled"}
+              <span class="status-pill settings-push-status-desktop ${pushStatusTone}">
+                ${pushStatusLabel}
               </span>
             </div>
 
@@ -962,15 +964,23 @@
                   : capability.message)}
             </div>
 
-            <div class="form-field">
-              <label for="notification-device-label">This device’s name</label>
-              <input
-                id="notification-device-label"
-                name="deviceLabel"
-                maxlength="80"
-                value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
-                ${deviceControlsAvailable ? "" : "disabled"}
-              />
+            <div class="settings-device-enrollment">
+              <div class="form-field">
+                <div class="settings-device-label-row">
+                  <label for="notification-device-label">This device’s name</label>
+                  <span class="status-pill settings-push-status-mobile ${pushStatusTone}">${pushStatusLabel}</span>
+                </div>
+                <input
+                  id="notification-device-label"
+                  name="deviceLabel"
+                  maxlength="80"
+                  value="${escapeAttribute(currentDevice?.device_label || getDefaultDeviceLabel())}"
+                  ${deviceControlsAvailable ? "" : "disabled"}
+                />
+              </div>
+              <button class="button button-secondary" id="toggle-push-device" type="button" ${
+                deviceControlsAvailable ? "" : "disabled"
+              }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
             </div>
 
             <div class="notification-preference-grid">
@@ -989,9 +999,6 @@
             </div>
 
             <div class="notification-settings-actions">
-              <button class="button button-secondary" id="toggle-push-device" type="button" ${
-                deviceControlsAvailable ? "" : "disabled"
-              }>${pushActive ? "Disable on this device" : "Enable on this device"}</button>
               <button class="button button-primary" type="submit" ${notificationControlsAvailable ? "" : "disabled"}>Save preferences</button>
             </div>
           </form>
@@ -1000,9 +1007,8 @@
             <div class="settings-card-heading">
               <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-laptop"></i></span>
               <div>
-                <h2>Notification devices</h2>
+                <h2>Your push devices</h2>
               </div>
-              <span class="tiny-pill">${formatNumber(state.pushSubscriptions.length)} enrolled</span>
             </div>
             <div class="settings-device-list">
               ${deviceRows || `
@@ -5038,7 +5044,7 @@
           </label>
           ${isCurrentDevice
             ? '<span class="tiny-pill notification-device-current">This device</span>'
-            : `<button class="text-button notification-device-remove" type="button" data-remove-push-subscription="${escapeAttribute(subscription.id)}">Remove stale device</button>`}
+            : `<button class="text-button notification-device-remove" type="button" data-remove-push-subscription="${escapeAttribute(subscription.id)}">Remove device</button>`}
         </div>
       `;
     }).join("");
@@ -5551,8 +5557,8 @@
     openModal(`
       <div class="modal-header">
         <div>
-          <p class="eyebrow">Remove stale device</p>
-          <h2>Stop delivering to this record?</h2>
+          <p class="eyebrow">Remove device</p>
+          <h2>Stop notifications on this device?</h2>
           <p>${escapeHtml(subscription.device_label)}</p>
         </div>
         <button class="modal-close" data-modal-close type="button" aria-label="Close">×</button>
@@ -5565,7 +5571,7 @@
       </div>
       <div class="modal-footer">
         <button class="button button-secondary" data-modal-close type="button">Keep device</button>
-        <button class="button button-danger" id="confirm-remove-push-subscription" type="button">Remove stale device</button>
+        <button class="button button-danger" id="confirm-remove-push-subscription" type="button">Remove device</button>
       </div>
     `);
 
