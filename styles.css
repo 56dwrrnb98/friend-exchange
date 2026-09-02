@@ -5141,9 +5141,9 @@ a.exchange-activity-item:focus-visible {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     padding:
-      8px
+      9px
       max(12px, env(safe-area-inset-right))
-      max(8px, env(safe-area-inset-bottom))
+      calc(max(8px, env(safe-area-inset-bottom)) + 3px)
       max(12px, env(safe-area-inset-left));
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-bottom: 0;
@@ -6001,9 +6001,9 @@ a.exchange-activity-item:focus-visible {
     left: 50%;
     width: min(100%, 720px);
     padding:
-      4px
+      5px
       max(8px, env(safe-area-inset-right))
-      max(4px, env(safe-area-inset-bottom))
+      calc(max(4px, env(safe-area-inset-bottom)) + 2px)
       max(8px, env(safe-area-inset-left));
     border-radius: 16px 16px 0 0;
   }
