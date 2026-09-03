@@ -14,7 +14,9 @@ The application uses:
 - An SMTP provider, such as Resend, for authentication emails
 - GitHub Pages or any other static web host
 
-There is no build step, package manager, framework, or custom server.
+There is no build step, package manager, framework, or continuously running
+application server. One Supabase Edge Function handles background Web Push
+delivery.
 
 ## Features
 
@@ -28,8 +30,8 @@ There is no build step, package manager, framework, or custom server.
   awards combined into one notice
 - A dedicated Settings page for profile, account access, push preferences, and
   enrolled-device cleanup
-- Per-device, opt-in Web Push preferences for new markets, closing soon, and
-  resolution or void alerts
+- Account-wide, opt-in Web Push preferences for new markets, closing soon, and
+  resolution or void alerts, delivered to each enrolled device
 - A focused administrator workspace with People and Notifications views,
   including a unified people registry, status-aware member actions, protected
   notification testing, and an expandable recent-delivery history
@@ -119,18 +121,11 @@ payout logic, database functions, monthly allowance schedule, and real-time
 publication configuration. Run the complete file once on a new Supabase
 project.
 
-For an existing installation, apply each newer file in `migrations/` instead
-of re-running the complete setup. Notification support is installed by
-`migrations/20260901_notifications.sql`; it leaves delivery **Off**.
-Existing notification installations should also apply
-`migrations/20260901_notification_test_history_cleanup.sql` to enable the
-admin-only **Clear test history** action, followed by
-`migrations/20260901_push_subscription_device_info.sql` so enrolled-device
-icons can distinguish phones, tablets, and computers. Apply
-`migrations/20260902_notification_live_impact.sql` to add the category-specific
-member and device reach shown before enabling Live delivery. Apply
-`migrations/20260902_admin_people_push_status.sql` to add the privacy-preserving
-Push readiness column to the administrator People report.
+Fresh installations should always use the consolidated `database.sql` file.
+The maintainer workspace separately retains incremental migrations for the
+existing production installation. Those migrations are intentionally omitted
+from the public distribution because a first-time installation does not need
+them.
 
 ## 2. Configure notification delivery
 
@@ -295,8 +290,8 @@ URL patterns.
 
 In Supabase:
 
-1. Open **Project Settings**.
-2. Open **API Keys**.
+1. Open the project's **Connect** dialog, or open **Settings → API Keys**.
+2. Find the browser/client configuration.
 3. Copy the **Project URL**.
 4. Copy the **Publishable key**.
 
@@ -400,7 +395,7 @@ To publish with GitHub Pages:
    **Redirect URLs**.
 
 See the [GitHub Pages publishing
-documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source)
+documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 for additional hosting instructions.
 
 Only administrator-approved email addresses can register, although the public
@@ -408,12 +403,11 @@ site URL itself can be shared freely.
 
 ---
 
-# Project files
+# Public distribution files
 
 ```text
 project/
 ├── img/                Icons, favicons, and link-preview artwork
-├── migrations/         Existing-project database upgrades
 ├── supabase/
 │   ├── config.toml     Edge Function authentication configuration
 │   └── functions/      Server-side Web Push delivery
@@ -430,6 +424,11 @@ project/
 ├── favicon.ico        Legacy browser icon
 └── README.md          Setup, architecture, and usage instructions
 ```
+
+The maintainer's working folder also contains incremental migrations and
+internal context, status, and decision documents. They are intentionally
+excluded from the public GitHub distribution. `database.sql` remains the
+complete schema and setup path for every fresh installation.
 
 # Development checks
 
@@ -449,11 +448,12 @@ PostgreSQL or verify live Row Level Security behavior.
 Supabase Auth manages account registration, email confirmation, sessions, and
 password recovery. The browser never receives or stores readable passwords.
 
-The database creates a public profile for each confirmed member and grants the
-starting balance. A scheduled database job grants the monthly allowance to
-members whose latest sign-in was within the preceding 90 days. Open browsers
-announce the award after the real-time balance refresh; browsers that were
-closed or offline announce unseen allowances on the next launch.
+The database creates a public profile and grants the starting balance when an
+approved Auth user is created. Email confirmation is still required before the
+member can enter the application. A scheduled database job grants the monthly
+allowance to members whose latest sign-in was within the preceding 90 days.
+Open browsers announce the award after the real-time balance refresh; browsers
+that were closed or offline announce unseen allowances on the next launch.
 
 Market lifecycle triggers create notification and recipient audit records in
 the same transaction as a successful market action. Members see those events
@@ -486,13 +486,14 @@ The Friend Exchange is designed for a small, trusted community.
 - Markets are resolved manually by their creator or an administrator; the
   application does not determine real-world outcomes automatically.
 - Display names are not required to be unique.
-- There are no comments, notification email fallback, images, market
-  categories, or search.
+- There are no comments, notification email fallback, market image uploads,
+  market categories, or search.
 - The application loads the complete small-community dataset at once. A large
   public deployment would require pagination and more selective queries.
 - The application depends on hosted Supabase, font, icon, and JavaScript assets
   and does not provide offline operation.
-- Modals do not currently trap keyboard focus or restore focus when closed.
+- Modals restore focus to their opening control when possible, but do not yet
+  trap keyboard focus while open.
 - External CDN assets do not currently use Subresource Integrity or a Content
   Security Policy.
 

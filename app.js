@@ -148,6 +148,8 @@
     modalRoot: document.querySelector("#modal-root"),
     toastRoot: document.querySelector("#toast-root"),
     headerBalance: document.querySelector("#header-balance"),
+    headerBalanceFull: document.querySelector("#header-balance-full"),
+    headerBalanceCompact: document.querySelector("#header-balance-compact"),
     balanceButton: document.querySelector("#balance-button"),
     adminNavLink: document.querySelector("#admin-nav-link"),
     adminMobileNavLink: document.querySelector("#admin-mobile-nav-link"),
@@ -679,7 +681,14 @@
   }
 
   function updateHeader() {
-    dom.headerBalance.textContent = `${formatNumber(state.profile?.balance || 0)} pts`;
+    const balance = Number(state.profile?.balance) || 0;
+    const fullBalance = formatHeaderBalance(balance);
+    dom.headerBalanceFull.textContent = fullBalance;
+    dom.headerBalanceCompact.textContent = formatHeaderBalance(balance, true);
+    dom.balanceButton.setAttribute(
+      "aria-label",
+      `Open account settings. Balance: ${fullBalance} points.`,
+    );
     const isAdmin = Boolean(state.profile?.is_admin);
     dom.adminNavLink.classList.toggle("hidden", !isAdmin);
     dom.adminMobileNavLink.classList.toggle("hidden", !isAdmin);
@@ -7859,6 +7868,12 @@
       notation: "compact",
       maximumFractionDigits: 1,
     }).format(Number(value) || 0);
+  }
+
+  function formatHeaderBalance(value, compact = false) {
+    const number = Number(value) || 0;
+    if (!compact || Math.abs(number) < 1000) return formatNumber(number);
+    return formatCompact(number).toLowerCase();
   }
 
   function formatPercent(value) {

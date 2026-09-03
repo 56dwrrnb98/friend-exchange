@@ -312,8 +312,12 @@
 
         <div class="header-actions">
           <button id="balance-button" class="balance-pill" type="button" aria-label="Open account settings">
-            <span>Balance</span>
-            <strong id="header-balance">—</strong>
+            <span class="balance-label">Balance</span>
+            <strong id="header-balance" aria-hidden="true">
+              <span id="header-balance-full">—</span>
+              <span id="header-balance-compact" class="balance-value-compact">—</span>
+              pts
+            </strong>
           </button>
           <a
             id="settings-link"
